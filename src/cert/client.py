@@ -10,13 +10,32 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Literal, Optional
+
+from cert.types import EvalMode, ToolCall
 
 import requests
 
 __version__ = "0.1.0"
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_tool_calls(tool_calls: List[Dict[str, Any]]) -> None:
+    """
+    Validate tool_calls structure before sending.
+
+    Args:
+        tool_calls: List of tool call dictionaries
+
+    Raises:
+        ValueError: If tool_calls structure is invalid
+    """
+    for i, tc in enumerate(tool_calls):
+        if "name" not in tc:
+            raise ValueError(f"tool_calls[{i}] missing required 'name' field")
+        if not isinstance(tc.get("name"), str):
+            raise ValueError(f"tool_calls[{i}].name must be a string")
 
 
 class CertClient:
@@ -82,7 +101,11 @@ class CertClient:
         duration_ms: float,
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
+        eval_mode: EvalMode = "auto",
         context: Optional[str] = None,
+        output_schema: Optional[Dict[str, Any]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        goal_description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -96,22 +119,52 @@ class CertClient:
             duration_ms: Request duration in milliseconds
             prompt_tokens: Input token count
             completion_tokens: Output token count
-            context: Optional RAG context/retrieved documents
+            eval_mode: Evaluation mode - "rag", "generation", "agentic", or "auto"
+                       (auto-detects based on context and tool_calls)
+            context: RAG context/retrieved documents (implies "rag" mode)
+            output_schema: Expected output structure for generation validation
+            tool_calls: List of tool/function calls (implies "agentic" mode)
+            goal_description: Description of the agentic goal
             metadata: Optional additional metadata
         """
-        trace_data = {
+        # Validate tool_calls structure if provided
+        if tool_calls is not None:
+            _validate_tool_calls(tool_calls)
+
+        # Resolve eval_mode if set to "auto"
+        resolved_mode: str = eval_mode
+        if eval_mode == "auto":
+            if tool_calls is not None and len(tool_calls) > 0:
+                resolved_mode = "agentic"
+            elif context is not None and len(context.strip()) > 0:
+                resolved_mode = "rag"
+            else:
+                resolved_mode = "generation"
+
+        # Build base payload
+        trace_data: Dict[str, Any] = {
             "id": str(uuid.uuid4()),
             "provider": provider,
             "model": model,
             "input": input_text,
             "output": output_text,
-            "context": context,
             "durationMs": duration_ms,
             "promptTokens": prompt_tokens,
             "completionTokens": completion_tokens,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "evalMode": resolved_mode,
             "metadata": metadata or {},
         }
+
+        # Only include mode-specific fields if present
+        if context is not None:
+            trace_data["context"] = context
+        if output_schema is not None:
+            trace_data["outputSchema"] = output_schema
+        if tool_calls is not None:
+            trace_data["toolCalls"] = tool_calls
+        if goal_description is not None:
+            trace_data["goalDescription"] = goal_description
 
         try:
             self._queue.put_nowait(trace_data)
