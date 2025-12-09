@@ -87,7 +87,12 @@ class CertClient:
     def __enter__(self) -> "CertClient":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> None:
         self.close()
 
     def trace(
