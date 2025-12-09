@@ -1,8 +1,11 @@
 # CERT SDK
 
+[![Tests](https://github.com/Javihaus/cert-sdk/workflows/Tests/badge.svg)](https://github.com/Javihaus/cert-sdk/actions)
+[![codecov](https://codecov.io/gh/Javihaus/cert-sdk/branch/main/graph/badge.svg)](https://codecov.io/gh/Javihaus/cert-sdk)
 [![PyPI version](https://badge.fury.io/py/cert-sdk.svg)](https://pypi.org/project/cert-sdk/)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
 Python SDK for [CERT](https://cert-framework-production.up.railway.app) — LLM monitoring, evaluation, and EU AI Act compliance.
 

@@ -18,7 +18,7 @@ Example:
 """
 
 from cert.client import CertClient, __version__
-from cert.types import EvalMode, TraceType, ToolCall, TraceData
+from cert.types import EvalMode, ToolCall, TraceData, TraceType
 
 __all__ = [
     "CertClient",

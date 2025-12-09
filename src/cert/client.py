@@ -4,6 +4,7 @@ CERT SDK Client - Non-blocking LLM trace collection.
 Thread-safe client that batches traces and sends them asynchronously.
 """
 
+import logging
 import queue
 import threading
 import uuid
@@ -12,9 +13,11 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from cert.types import TraceType, ToolCall
+from cert.types import ToolCall, TraceType
 
 __version__ = "0.2.0"
+
+logger = logging.getLogger("cert")
 
 
 class CertClient:
@@ -30,7 +33,8 @@ class CertClient:
         dashboard_url: Custom CERT dashboard URL (default: https://cert-app.vercel.app)
         batch_size: Number of traces to batch before sending (default: 10)
         flush_interval: Seconds between automatic flushes (default: 5.0)
-        max_queue_size: Maximum queue size before dropping traces (default: 10000)
+        max_queue_size: Maximum queue size before dropping traces (default: 1000)
+        timeout: HTTP request timeout in seconds (default: 10.0)
 
     Example:
         >>> client = CertClient(api_key="cert_xxx", project="my-app")
@@ -56,7 +60,8 @@ class CertClient:
         dashboard_url: str = DEFAULT_URL,
         batch_size: int = 10,
         flush_interval: float = 5.0,
-        max_queue_size: int = 10000,
+        max_queue_size: int = 1000,
+        timeout: float = 10.0,
     ):
         if not api_key:
             raise ValueError("api_key is required")
@@ -66,20 +71,27 @@ class CertClient:
         self.endpoint = dashboard_url.rstrip("/") + "/api/v1/traces"
         self.batch_size = batch_size
         self.flush_interval = flush_interval
+        self.timeout = timeout
 
         # Queue for traces
-        self._queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
+        self._queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=max_queue_size)
 
-        # Stats counters (thread-safe via atomic operations)
+        # Stats counters (thread-safe via lock)
         self._sent = 0
         self._failed = 0
         self._dropped = 0
         self._lock = threading.Lock()
 
+        # Flush event for synchronous flush
+        self._flush_event = threading.Event()
+        self._flush_complete = threading.Event()
+
         # Worker thread
         self._stop_event = threading.Event()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
+
+        logger.debug("CertClient initialized for project %r", project)
 
     def __repr__(self) -> str:
         return f"CertClient(project={self.project!r})"
@@ -182,11 +194,42 @@ class CertClient:
         # Queue trace (non-blocking)
         try:
             self._queue.put_nowait(trace_data)
+            logger.debug("Queued trace %s", trace_id)
         except queue.Full:
             with self._lock:
                 self._dropped += 1
+            logger.warning("Queue full, dropped trace %s", trace_id)
 
         return trace_id
+
+    def flush(self, timeout: float = 10.0) -> int:
+        """
+        Force-send all pending traces.
+
+        Blocks until all queued traces are sent or timeout expires.
+
+        Args:
+            timeout: Maximum seconds to wait (default: 10.0)
+
+        Returns:
+            int: Number of traces sent during this flush
+        """
+        if self._stop_event.is_set():
+            return 0
+
+        with self._lock:
+            sent_before = self._sent
+
+        # Signal worker to flush
+        self._flush_complete.clear()
+        self._flush_event.set()
+
+        # Wait for flush to complete
+        self._flush_complete.wait(timeout=timeout)
+
+        with self._lock:
+            sent_after = self._sent
+            return sent_after - sent_before
 
     def stats(self) -> Dict[str, int]:
         """
@@ -210,11 +253,13 @@ class CertClient:
         Args:
             timeout: Maximum seconds to wait for worker to finish
         """
+        logger.debug("Closing CertClient")
         # Signal worker to stop and flush
         self._stop_event.set()
 
         # Wait for worker to finish
         self._worker.join(timeout=timeout)
+        logger.debug("CertClient closed")
 
     def _worker_loop(self) -> None:
         """Background worker that batches and sends traces."""
@@ -223,6 +268,22 @@ class CertClient:
 
         while True:
             try:
+                # Check for flush request
+                if self._flush_event.is_set():
+                    # Drain queue and send everything
+                    while not self._queue.empty():
+                        try:
+                            trace = self._queue.get_nowait()
+                            batch.append(trace)
+                        except queue.Empty:
+                            break
+                    if batch:
+                        self._send_batch(batch)
+                        batch = []
+                        last_flush = datetime.now(timezone.utc)
+                    self._flush_event.clear()
+                    self._flush_complete.set()
+
                 # Try to get a trace with timeout
                 try:
                     trace = self._queue.get(timeout=0.1)
@@ -248,14 +309,16 @@ class CertClient:
                 if self._stop_event.is_set() and self._queue.empty() and not batch:
                     break
 
-            except Exception:
+            except Exception as e:
                 # Don't let worker crash
-                pass
+                logger.exception("Worker error: %s", e)
 
     def _send_batch(self, batch: List[Dict[str, Any]]) -> None:
         """Send a batch of traces to the API."""
         if not batch:
             return
+
+        logger.debug("Sending batch of %d traces", len(batch))
 
         try:
             response = requests.post(
@@ -265,16 +328,27 @@ class CertClient:
                     "X-API-Key": self.api_key,
                     "Content-Type": "application/json",
                 },
-                timeout=10,
+                timeout=self.timeout,
             )
 
             if response.status_code == 200:
                 with self._lock:
                     self._sent += len(batch)
+                logger.debug("Successfully sent %d traces", len(batch))
             else:
                 with self._lock:
                     self._failed += len(batch)
+                logger.warning(
+                    "Failed to send traces: HTTP %d - %s",
+                    response.status_code,
+                    response.text[:200],
+                )
 
-        except Exception:
+        except requests.exceptions.Timeout:
             with self._lock:
                 self._failed += len(batch)
+            logger.warning("Timeout sending %d traces", len(batch))
+        except Exception as e:
+            with self._lock:
+                self._failed += len(batch)
+            logger.warning("Error sending traces: %s", e)

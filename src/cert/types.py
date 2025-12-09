@@ -6,7 +6,6 @@ Type hints for LLM tracing with evaluation mode support.
 
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
-
 # User-declared trace type (required)
 TraceType = Literal["rag", "generation", "agentic"]
 
