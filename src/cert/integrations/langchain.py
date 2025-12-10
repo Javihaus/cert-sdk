@@ -32,6 +32,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+from cert.types import EvalMode
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -410,7 +412,7 @@ class CERTLangChainHandler(BaseCallbackHandler):
             )
 
         # Determine eval mode
-        eval_mode = "agentic" if run.tool_calls else "generation"
+        eval_mode: EvalMode = "agentic" if run.tool_calls else "generation"
 
         # Build context from tool outputs if agentic
         context = None
@@ -618,6 +620,7 @@ class CERTLangChainHandler(BaseCallbackHandler):
             return
 
         # Serialize output
+        tool_output: Any
         if isinstance(output, (dict, list)):
             tool_output = output
         elif hasattr(output, "dict"):
