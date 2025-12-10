@@ -34,6 +34,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from cert.types import EvalMode
+
 logger = logging.getLogger(__name__)
 
 # Check if AutoGen is available
@@ -119,7 +121,7 @@ class CERTAutoGenHandler:
         self._runs: Dict[str, _ConversationRun] = {}
 
         # Track wrapped agents for cleanup
-        self._wrapped_agents: Dict[str, Dict[str, Any]] = {}
+        self._wrapped_agents: Dict[int, Dict[str, Any]] = {}
 
     # =========================================================================
     # Public API
@@ -638,10 +640,10 @@ class CERTAutoGenHandler:
             )
 
         # Determine eval mode
-        eval_mode = "agentic" if run.tool_calls else "generation"
+        eval_mode: EvalMode = "agentic" if run.tool_calls else "generation"
 
         # Build context from tool outputs if agentic
-        context = None
+        context: Optional[str] = None
         if run.tool_calls:
             tool_outputs = []
             for tc in run.tool_calls:
