@@ -4,78 +4,60 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cert-sdk"
-version = "0.2.0"
-description = "Python SDK for CERT LLM monitoring - quality evaluation and EU AI Act compliance"
+version = "0.1.0"
+description = "Python SDK for CERT LLM monitoring dashboard"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Javier Marin", email = "javier@jmarin.info"},
 ]
-keywords = [
-    "llm",
-    "monitoring",
-    "observability",
-    "ai",
-    "tracing",
-    "evaluation",
-    "rag",
-    "agents",
-    "eu-ai-act",
-    "compliance",
-]
+keywords = ["llm", "monitoring", "observability", "ai", "tracing"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: System :: Monitoring",
-    "Typing :: Typed",
 ]
 dependencies = [
     "requests>=2.25.0",
 ]
 
 [project.optional-dependencies]
+langchain = [
+    "langchain>=0.1.0",
+    "langchain-core>=0.1.0",
+]
+autogen = [
+    "pyautogen>=0.2.0",
+]
+crewai = [
+    "crewai>=0.1.0",
+]
+all = [
+    "langchain>=0.1.0",
+    "langchain-core>=0.1.0",
+    "pyautogen>=0.2.0",
+    "crewai>=0.1.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "mypy>=1.0.0",
+    "black>=23.0.0",
     "ruff>=0.1.0",
+    "mypy>=1.0.0",
 ]
 
 [project.urls]
-Homepage = "https://cert-framework-production.up.railway.app"
-Documentation = "https://github.com/Javihaus/cert-sdk#readme"
-Repository = "https://github.com/Javihaus/cert-sdk"
-Issues = "https://github.com/Javihaus/cert-sdk/issues"
-Changelog = "https://github.com/Javihaus/cert-sdk/releases"
+Homepage = "https://dashboard.cert-framework.com"
+Documentation = "https://github.com/yourusername/cert-sdk#readme"
+Repository = "https://github.com/yourusername/cert-sdk"
+Issues = "https://github.com/yourusername/cert-sdk/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cert"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py38"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
-
-[tool.mypy]
-python_version = "3.8"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-v --tb=short"

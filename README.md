@@ -1,211 +1,267 @@
 # CERT SDK
 
-[![PyPI version](https://badge.fury.io/py/cert-sdk.svg)](https://pypi.org/project/cert-sdk/)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+Python SDK for the [CERT LLM Monitoring Dashboard](https://dashboard.cert-framework.com).
 
-Python SDK for [CERT](https://cert-framework-production.up.railway.app) — LLM monitoring, evaluation, and EU AI Act compliance.
+Monitor and evaluate your LLM applications in production with automatic context extraction for agentic pipelines.
 
 ## Features
 
-- **Non-blocking** — Background thread handles HTTP, never slows your app
-- **Batched** — Efficient bulk sending reduces network overhead
-- **Resilient** — Fails silently, never crashes your application
-- **Simple** — 4 lines to instrument any LLM call
-- **Typed** — Full type hints for IDE autocomplete
+- **Non-blocking**: Background thread, never slows your app
+- **Batched**: Efficient bulk sending
+- **Resilient**: Fails silently, never crashes your app
+- **Automatic Context Extraction**: Tool outputs become context in agentic mode
+- **Framework Integrations**: LangChain, AutoGen, CrewAI support
+- **Multi-Modal Evaluation**: RAG, Generation, and Agentic modes
 
 ## Installation
 
 ```bash
+# Core SDK
 pip install cert-sdk
+
+# With framework integrations
+pip install cert-sdk[langchain]  # LangChain support
+pip install cert-sdk[autogen]    # AutoGen support
+pip install cert-sdk[crewai]     # CrewAI support
+pip install cert-sdk[all]        # All integrations
 ```
 
 ## Quick Start
 
+### Basic Usage
+
 ```python
 from cert import CertClient
 
-# Initialize client with your API key
-client = CertClient(
-    api_key="cert_xxx",      # Get from dashboard settings
-    project="my-app",        # Organize traces by project
-)
+# Initialize once
+client = CertClient(api_key="cert_xxx")
 
-# After each LLM call, log a trace
+# Trace an LLM call
 client.trace(
-    type="generation",       # "rag", "generation", or "agentic"
     provider="openai",
-    model="gpt-4o",
-    input_text="Explain quantum computing",
-    output_text="Quantum computing uses quantum mechanical phenomena...",
-    duration_ms=1523,
-    prompt_tokens=15,
-    completion_tokens=150,
+    model="gpt-4",
+    input_text="What is the capital of France?",
+    output_text="The capital of France is Paris.",
+    duration_ms=234,
+    prompt_tokens=10,
+    completion_tokens=15,
 )
 
-# Important: flush before exit (especially in notebooks/scripts)
-client.flush()
+# Before exit
 client.close()
 ```
 
-## Trace Types
+### Context Manager
 
-CERT supports three trace types for different LLM use cases:
+```python
+with CertClient(api_key="cert_xxx") as client:
+    client.trace(...)
+# Auto-closes and flushes on exit
+```
 
-### RAG (Retrieval-Augmented Generation)
+## Evaluation Modes
+
+CERT supports three evaluation modes, each with different metric availability:
+
+| Mode | Context Source | Available Metrics |
+|------|---------------|-------------------|
+| **RAG** | Explicit context | Semantic similarity, NLI, Grounding, SGI |
+| **Agentic** | Tool outputs (auto-extracted) | Same as RAG + tool integration metrics |
+| **Generation** | None | Instruction adherence, self-consistency, format |
+
+### RAG Mode
+
+Use when you have explicit context (retrieved documents):
 
 ```python
 client.trace(
-    type="rag",
     provider="anthropic",
-    model="claude-sonnet-4-5-20250929",
-    input_text="What is our refund policy?",
-    output_text="Our refund policy allows returns within 30 days...",
-    duration_ms=1234,
-    context="[Policy Document] Returns are accepted within 30 days of purchase...",
+    model="claude-sonnet-4",
+    input_text="What are the symptoms?",
+    output_text="Common symptoms include fever and fatigue.",
+    duration_ms=456,
+    context="Patient guide: Common symptoms include fever, fatigue, and headache.",
+    eval_mode="rag",  # Optional: auto-detected when context provided
 )
 ```
 
-### Generation (Chat, Completion, Structured Output)
+### Agentic Mode
+
+Use for agent pipelines with tool calls. **Tool outputs automatically become context:**
 
 ```python
 client.trace(
-    type="generation",
     provider="openai",
-    model="gpt-4o",
-    input_text="Write a haiku about Python",
-    output_text="Code flows like water\nIndentation guides the way\nBeautiful and clear",
-    duration_ms=890,
-    output_schema={"type": "string", "format": "haiku"},  # Optional
+    model="gpt-4",
+    input_text="What's the weather in NYC?",
+    output_text="It's currently 72°F and sunny in New York City.",
+    duration_ms=1500,
+    tool_calls=[
+        {
+            "name": "weather_api",
+            "input": {"city": "NYC"},
+            "output": {"temperature": 72, "condition": "sunny", "city": "New York City"}
+        }
+    ],
+    goal_description="Get current weather information",
 )
+# Context is automatically extracted: "[weather_api]: {"temperature": 72, ...}"
 ```
 
-### Agentic (Tool Use, Multi-step)
+### Generation Mode
+
+Use for generation without external context:
 
 ```python
 client.trace(
-    type="agentic",
     provider="anthropic",
-    model="claude-sonnet-4-5-20250929",
-    input_text="What's the weather in Tokyo and book a flight there",
-    output_text="The weather in Tokyo is 22°C. I've booked flight JL123...",
-    duration_ms=4521,
-    tool_calls=[
-        {"name": "get_weather", "input": {"city": "Tokyo"}, "output": {"temp": 22}},
-        {"name": "book_flight", "input": {"destination": "Tokyo"}, "output": {"flight": "JL123"}},
-    ],
-    goal_description="Check weather and book travel",
+    model="claude-sonnet-4",
+    input_text="Write a haiku about spring",
+    output_text="Cherry blossoms fall\nGentle breeze carries petals\nNew life awakens",
+    duration_ms=890,
+    eval_mode="generation",
 )
 ```
 
-## Context Manager
+## Framework Integrations
 
-Auto-close with context manager:
+### LangChain
 
 ```python
-with CertClient(api_key="cert_xxx", project="my-app") as client:
-    client.trace(type="generation", ...)
-# Automatically flushes and closes
+from cert import CertClient
+from cert.integrations.langchain import CERTLangChainHandler
+
+client = CertClient(api_key="cert_xxx")
+handler = CERTLangChainHandler(client)
+
+# Option 1: Use with callbacks
+result = agent.invoke(
+    {"input": "What's the weather?"},
+    config={"callbacks": [handler]}
+)
+
+# Option 2: Manual tracing with intermediate steps
+result = agent.invoke(
+    {"input": "Calculate 2+2"},
+    return_intermediate_steps=True
+)
+handler.trace_from_result(
+    input_text="Calculate 2+2",
+    result=result,
+    provider="openai",
+    model="gpt-4"
+)
 ```
 
-## Notebooks & Scripts
-
-In Jupyter notebooks or short-lived scripts, always call `flush()` before exit:
+### AutoGen
 
 ```python
+from cert import CertClient
+from cert.integrations.autogen import CERTAutoGenHandler
+
 client = CertClient(api_key="cert_xxx")
+handler = CERTAutoGenHandler(client)
 
-# ... your traces ...
+# Trace a conversation
+result = handler.trace_conversation(
+    initiator=user_proxy,
+    recipient=assistant,
+    message="What's the weather in NYC?"
+)
+```
 
-# Critical: ensures all traces are sent before kernel/process exits
-client.flush()
+### CrewAI
+
+```python
+from cert import CertClient
+from cert.integrations.crewai import CERTCrewAIHandler
+
+client = CertClient(api_key="cert_xxx")
+handler = CERTCrewAIHandler(client)
+
+# Trace crew execution
+result = handler.trace_crew(
+    crew=my_crew,
+    inputs={"topic": "AI safety research"}
+)
+```
+
+## Automatic Context Extraction
+
+In agentic mode, the SDK automatically extracts context from tool outputs. This is critical for computing reliability metrics like SGI (Source-Grounding Index).
+
+```python
+# These are equivalent:
+
+# Manual context construction
+context = "[search]: {'results': ['doc1', 'doc2']}\n\n[calculate]: 42"
+client.trace(context=context, tool_calls=tool_calls, ...)
+
+# Automatic extraction (default)
+client.trace(tool_calls=tool_calls, ...)  # Context extracted automatically!
+```
+
+To disable automatic extraction:
+
+```python
+client = CertClient(api_key="cert_xxx", auto_extract_context=False)
 ```
 
 ## Configuration
 
 ```python
 client = CertClient(
-    api_key="cert_xxx",         # Required: API key from dashboard
-    project="my-app",           # Project name (default: "default")
-    dashboard_url=None,         # Custom URL (default: CERT production)
+    api_key="cert_xxx",
+    dashboard_url="https://dashboard.cert-framework.com",
     batch_size=10,              # Traces per batch (default: 10)
-    flush_interval=5.0,         # Max seconds between sends (default: 5.0)
+    flush_interval=5.0,         # Seconds between flushes (default: 5.0)
     max_queue_size=1000,        # Max queued traces (default: 1000)
-    timeout=10.0,               # HTTP timeout seconds (default: 10.0)
+    timeout=5.0,                # HTTP timeout (default: 5.0)
+    auto_extract_context=True,  # Auto-extract context from tools (default: True)
 )
 ```
 
-## Monitoring
+## Utility Functions
 
-Check client health:
-
-```python
-stats = client.stats()
-print(stats)
-# {'traces_sent': 42, 'traces_failed': 0, 'traces_dropped': 0, 'traces_queued': 3}
-```
-
-Enable debug logging:
+### Manual Context Extraction
 
 ```python
-import logging
-logging.getLogger("cert").setLevel(logging.DEBUG)
+from cert import extract_context_from_tool_calls
+
+tool_calls = [
+    {"name": "search", "output": {"results": ["doc1", "doc2"]}},
+    {"name": "calculate", "output": 42},
+    {"name": "api_call", "error": "Connection timeout"},
+]
+
+context = extract_context_from_tool_calls(tool_calls)
+# Result:
+# [search]: {"results": ["doc1", "doc2"]}
+#
+# [calculate]: 42
+#
+# [api_call] ERROR: Connection timeout
 ```
 
-## API Reference
+## Statistics
 
-### `CertClient.trace()`
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `type` | `"rag"` \| `"generation"` \| `"agentic"` | Yes | Trace classification |
-| `provider` | `str` | Yes | LLM provider name |
-| `model` | `str` | Yes | Model identifier |
-| `input_text` | `str` | Yes | User prompt/input |
-| `output_text` | `str` | Yes | Model response |
-| `duration_ms` | `float` | Yes | Request duration |
-| `prompt_tokens` | `int` | No | Input token count |
-| `completion_tokens` | `int` | No | Output token count |
-| `context` | `str` | No | RAG: retrieved documents |
-| `output_schema` | `dict` | No | Generation: expected schema |
-| `tool_calls` | `list` | No | Agentic: tool invocations |
-| `goal_description` | `str` | No | Agentic: task description |
-| `metadata` | `dict` | No | Custom key-value pairs |
-
-### `CertClient.flush(timeout=10.0)`
-
-Force-send all pending traces. Returns count sent.
-
-### `CertClient.close()`
-
-Flush and stop background worker. Call on shutdown.
-
-### `CertClient.stats()`
-
-Returns dict with `traces_sent`, `traces_failed`, `traces_dropped`, `traces_queued`.
+```python
+stats = client.get_stats()
+print(f"Sent: {stats['traces_sent']}")
+print(f"Failed: {stats['traces_failed']}")
+print(f"Queued: {stats['traces_queued']}")
+```
 
 ## Dashboard
 
-View traces, run evaluations, and generate compliance reports:
+View your traces at [dashboard.cert-framework.com](https://dashboard.cert-framework.com):
 
-**[cert-framework-production.up.railway.app](https://cert-framework-production.up.railway.app)**
-
-- Real-time trace monitoring
-- Automated quality evaluation (NLI-based)
-- Cost and latency analytics
-- EU AI Act compliance documentation
-
-## Requirements
-
-- Python 3.8+
-- `requests` library
+- Real-time monitoring
+- Reliability metrics (SGI, NLI scores, grounding)
+- Cost analysis
+- EU AI Act compliance reports
+- Model comparison
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
-
-## Links
-
-- [Dashboard](https://cert-framework-production.up.railway.app)
-- [GitHub](https://github.com/Javihaus/cert-sdk)
-- [Issues](https://github.com/Javihaus/cert-sdk/issues)
+Apache 2.0
