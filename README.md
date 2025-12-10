@@ -2,7 +2,6 @@
 
 [![PyPI version](https://badge.fury.io/py/cert-sdk.svg)](https://badge.fury.io/py/cert-sdk)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Production-grade observability for LLM applications.** CERT SDK provides non-blocking telemetry collection for monitoring reliability, latency, and correctness of AI systems in production.
 
