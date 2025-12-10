@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict
 # Evaluation modes for trace classification
 EvalMode = Literal["rag", "generation", "agentic", "auto"]
 
+# Span kind for distributed tracing
+SpanKind = Literal["CLIENT", "SERVER", "INTERNAL", "PRODUCER", "CONSUMER"]
+
+# Trace status
+TraceStatus = Literal["success", "error"]
+
 
 class ToolCall(TypedDict, total=False):
     """
