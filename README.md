@@ -1,267 +1,637 @@
 # CERT SDK
 
-Python SDK for the [CERT LLM Monitoring Dashboard](https://dashboard.cert-framework.com).
+[![PyPI version](https://badge.fury.io/py/cert-sdk.svg)](https://badge.fury.io/py/cert-sdk)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Monitor and evaluate your LLM applications in production with automatic context extraction for agentic pipelines.
+**Production-grade observability for LLM applications.** CERT SDK provides non-blocking telemetry collection for monitoring reliability, latency, and correctness of AI systems in production.
 
-## Features
+```python
+from cert import CertClient
 
-- **Non-blocking**: Background thread, never slows your app
-- **Batched**: Efficient bulk sending
-- **Resilient**: Fails silently, never crashes your app
-- **Automatic Context Extraction**: Tool outputs become context in agentic mode
-- **Framework Integrations**: LangChain, AutoGen, CrewAI support
-- **Multi-Modal Evaluation**: RAG, Generation, and Agentic modes
+client = CertClient(api_key="cert_xxx", project="my-project")
+
+client.trace(
+    provider="openai",
+    model="gpt-4o",
+    input_text="What is the capital of France?",
+    output_text="The capital of France is Paris.",
+    duration_ms=245.3,
+    prompt_tokens=12,
+    completion_tokens=8
+)
+```
+
+View traces at [dashboard.cert-framework.com](https://dashboard.cert-framework.com)
+
+---
 
 ## Installation
 
 ```bash
-# Core SDK
 pip install cert-sdk
-
-# With framework integrations
-pip install cert-sdk[langchain]  # LangChain support
-pip install cert-sdk[autogen]    # AutoGen support
-pip install cert-sdk[crewai]     # CrewAI support
-pip install cert-sdk[all]        # All integrations
 ```
+
+**Requirements:** Python 3.9+
+
+---
 
 ## Quick Start
 
-### Basic Usage
+### 1. Get Your API Key
+
+Sign up at [dashboard.cert-framework.com](https://dashboard.cert-framework.com) and create an API key.
+
+### 2. Initialize the Client
 
 ```python
 from cert import CertClient
 
-# Initialize once
-client = CertClient(api_key="cert_xxx")
+client = CertClient(
+    api_key="cert_xxx",        # Required: Your CERT API key
+    project="my-llm-app"       # Required: Project name for organizing traces
+)
+```
 
-# Trace an LLM call
+### 3. Trace LLM Calls
+
+```python
+import time
+
+start = time.perf_counter()
+response = openai.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+duration_ms = (time.perf_counter() - start) * 1000
+
 client.trace(
     provider="openai",
-    model="gpt-4",
-    input_text="What is the capital of France?",
-    output_text="The capital of France is Paris.",
-    duration_ms=234,
-    prompt_tokens=10,
-    completion_tokens=15,
+    model="gpt-4o",
+    input_text="Hello",
+    output_text=response.choices[0].message.content,
+    duration_ms=duration_ms,
+    prompt_tokens=response.usage.prompt_tokens,
+    completion_tokens=response.usage.completion_tokens
+)
+```
+
+### 4. Cleanup
+
+```python
+client.flush()   # Send pending traces
+client.close()   # Shutdown background worker
+```
+
+---
+
+## Core Concepts
+
+### Projects
+
+Traces are organized by **project**. Each project appears separately in the dashboard with its own metrics and visualizations.
+
+```python
+# Production traffic
+prod_client = CertClient(api_key=key, project="chatbot-prod")
+
+# Development/testing
+dev_client = CertClient(api_key=key, project="chatbot-dev")
+```
+
+**Best Practice:** Use separate projects for different evaluation paradigms (agentic vs generation) since they have different applicable metrics.
+
+### Evaluation Modes
+
+CERT evaluates traces differently based on their type:
+
+| Mode | When to Use | Key Metrics |
+|------|-------------|-------------|
+| `agentic` | Agent with tools | SGI, Grounding, Tool Integration |
+| `rag` | Retrieval-augmented | Faithfulness, Citation Accuracy |
+| `generation` | Direct LLM output | Self-Consistency, Format Compliance |
+
+The SDK **auto-detects** the mode based on what you provide:
+
+```python
+# Auto-detected as "agentic" (tool_calls present)
+client.trace(..., tool_calls=[{"name": "search", "input": {...}, "output": {...}}])
+
+# Auto-detected as "rag" (context present, no tools)
+client.trace(..., context="Retrieved document text...")
+
+# Auto-detected as "generation" (neither present)
+client.trace(...)
+```
+
+Override with `eval_mode="agentic"` if needed.
+
+---
+
+## API Reference
+
+### `CertClient`
+
+```python
+CertClient(
+    api_key: str,                    # Required: CERT API key
+    project: str = "default",        # Project name
+    dashboard_url: str = "https://dashboard.cert-framework.com",
+    batch_size: int = 10,            # Traces per batch
+    flush_interval: float = 5.0,     # Seconds between auto-flushes
+    max_queue_size: int = 1000,      # Max queued traces
+    timeout: float = 5.0             # HTTP timeout
+)
+```
+
+### `trace()`
+
+Log an LLM interaction. **Non-blocking**—returns immediately while trace is queued.
+
+```python
+client.trace(
+    # === REQUIRED ===
+    provider: str,           # LLM provider: "openai", "anthropic", "google", etc.
+    model: str,              # Model name: "gpt-4o", "claude-sonnet-4", etc.
+    input_text: str,         # User prompt or input
+    output_text: str,        # Model response
+    duration_ms: float,      # Request latency in milliseconds
+    
+    # === TOKENS ===
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    # total_tokens computed automatically
+    
+    # === TIMING ===
+    start_time: datetime = None,   # Request start (auto-generated if omitted)
+    end_time: datetime = None,     # Request end (auto-generated if omitted)
+    
+    # === STATUS ===
+    status: str = "success",       # "success" or "error"
+    error_message: str = None,     # Error details if status="error"
+    
+    # === DISTRIBUTED TRACING ===
+    trace_id: str = None,          # Correlation ID (auto-generated if omitted)
+    span_id: str = None,           # Unique span ID (auto-generated if omitted)
+    parent_span_id: str = None,    # Parent span for nested calls
+    name: str = None,              # Operation name (default: "{provider}.{model}")
+    kind: str = "CLIENT",          # Span kind: "CLIENT", "SERVER", "INTERNAL"
+    
+    # === EVALUATION CONFIG ===
+    eval_mode: str = "auto",       # "agentic", "rag", "generation", or "auto"
+    context: str = None,           # RAG context / retrieved documents
+    tool_calls: list = None,       # Tool invocations (agentic mode)
+    goal_description: str = None,  # Task objective for agentic evaluation
+    output_schema: dict = None,    # Expected output structure
+    
+    # === CUSTOM DATA ===
+    metadata: dict = None          # Arbitrary key-value pairs
+) -> str                           # Returns trace_id
+```
+
+### `flush()`
+
+Send all pending traces immediately. Blocks until complete.
+
+```python
+client.flush(timeout: float = 10.0)
+```
+
+### `close()`
+
+Flush pending traces and shutdown background worker. Call when shutting down your application.
+
+```python
+client.close()
+```
+
+### `get_stats()`
+
+Get client statistics.
+
+```python
+stats = client.get_stats()
+# {"traces_sent": 150, "traces_failed": 0, "traces_queued": 3}
+```
+
+---
+
+## How to use cert SDK
+
+### Basic Generation
+
+Simple LLM calls without tools or retrieval:
+
+```python
+client.trace(
+    provider="anthropic",
+    model="claude-sonnet-4",
+    input_text=user_message,
+    output_text=response,
+    duration_ms=duration,
+    prompt_tokens=usage.input_tokens,
+    completion_tokens=usage.output_tokens
+)
+# eval_mode auto-detected as "generation"
+```
+
+### RAG Pipeline
+
+Include retrieved context for faithfulness evaluation:
+
+```python
+# Retrieved documents
+context = "\n".join([doc.page_content for doc in retrieved_docs])
+
+client.trace(
+    provider="openai",
+    model="gpt-4o",
+    input_text=query,
+    output_text=response,
+    duration_ms=duration,
+    prompt_tokens=prompt_tokens,
+    completion_tokens=completion_tokens,
+    context=context  # Enables faithfulness metrics
+)
+# eval_mode auto-detected as "rag"
+```
+
+### Agentic Pipeline
+
+Capture tool calls for grounding evaluation:
+
+```python
+tool_calls = [
+    {
+        "name": "get_weather",
+        "input": {"city": "Paris"},
+        "output": {"temperature": 22, "condition": "sunny"}
+    },
+    {
+        "name": "calculator",
+        "input": {"expression": "22 * 1.8 + 32"},
+        "output": {"result": 71.6}
+    }
+]
+
+client.trace(
+    provider="openai",
+    model="gpt-4o",
+    input_text="What's the weather in Paris in Fahrenheit?",
+    output_text="It's 72°F and sunny in Paris.",
+    duration_ms=1250.5,
+    prompt_tokens=150,
+    completion_tokens=45,
+    tool_calls=tool_calls,
+    goal_description="Convert weather to Fahrenheit"
+)
+# eval_mode auto-detected as "agentic"
+```
+
+### Error Tracking
+
+Capture failures for debugging:
+
+```python
+try:
+    response = llm.invoke(prompt)
+    client.trace(
+        ...,
+        output_text=response.content,
+        status="success"
+    )
+except Exception as e:
+    client.trace(
+        ...,
+        output_text="",
+        status="error",
+        error_message=str(e)
+    )
+```
+
+### Distributed Tracing
+
+Correlate multiple spans in a single request:
+
+```python
+import uuid
+
+# Parent trace
+trace_id = str(uuid.uuid4())
+
+# First LLM call (planning)
+client.trace(
+    ...,
+    trace_id=trace_id,
+    span_id="span-plan",
+    name="agent.plan"
 )
 
-# Before exit
-client.close()
+# Second LLM call (execution)
+client.trace(
+    ...,
+    trace_id=trace_id,
+    span_id="span-execute",
+    parent_span_id="span-plan",
+    name="agent.execute"
+)
 ```
 
 ### Context Manager
 
-```python
-with CertClient(api_key="cert_xxx") as client:
-    client.trace(...)
-# Auto-closes and flushes on exit
-```
-
-## Evaluation Modes
-
-CERT supports three evaluation modes, each with different metric availability:
-
-| Mode | Context Source | Available Metrics |
-|------|---------------|-------------------|
-| **RAG** | Explicit context | Semantic similarity, NLI, Grounding, SGI |
-| **Agentic** | Tool outputs (auto-extracted) | Same as RAG + tool integration metrics |
-| **Generation** | None | Instruction adherence, self-consistency, format |
-
-### RAG Mode
-
-Use when you have explicit context (retrieved documents):
+Automatic timing and error capture:
 
 ```python
-client.trace(
-    provider="anthropic",
-    model="claude-sonnet-4",
-    input_text="What are the symptoms?",
-    output_text="Common symptoms include fever and fatigue.",
-    duration_ms=456,
-    context="Patient guide: Common symptoms include fever, fatigue, and headache.",
-    eval_mode="rag",  # Optional: auto-detected when context provided
-)
-```
+from cert import CertClient, TraceContext
 
-### Agentic Mode
-
-Use for agent pipelines with tool calls. **Tool outputs automatically become context:**
-
-```python
-client.trace(
+with TraceContext(
+    client,
     provider="openai",
-    model="gpt-4",
-    input_text="What's the weather in NYC?",
-    output_text="It's currently 72°F and sunny in New York City.",
-    duration_ms=1500,
-    tool_calls=[
-        {
-            "name": "weather_api",
-            "input": {"city": "NYC"},
-            "output": {"temperature": 72, "condition": "sunny", "city": "New York City"}
-        }
-    ],
-    goal_description="Get current weather information",
-)
-# Context is automatically extracted: "[weather_api]: {"temperature": 72, ...}"
+    model="gpt-4o",
+    input_text=prompt
+) as ctx:
+    response = llm.invoke(prompt)
+    ctx.set_output(response.content)
+    ctx.set_tokens(response.usage.prompt_tokens, response.usage.completion_tokens)
+
+# Timing, status, and errors captured automatically
 ```
 
-### Generation Mode
+---
 
-Use for generation without external context:
+## Framework Integration
 
-```python
-client.trace(
-    provider="anthropic",
-    model="claude-sonnet-4",
-    input_text="Write a haiku about spring",
-    output_text="Cherry blossoms fall\nGentle breeze carries petals\nNew life awakens",
-    duration_ms=890,
-    eval_mode="generation",
-)
-```
-
-## Framework Integrations
-
-### LangChain
+### LangChain / LangGraph
 
 ```python
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
 from cert import CertClient
-from cert.integrations.langchain import CERTLangChainHandler
+import time
 
-client = CertClient(api_key="cert_xxx")
-handler = CERTLangChainHandler(client)
+client = CertClient(api_key=key, project="langchain-app")
+llm = ChatOpenAI(model="gpt-4o")
+agent = create_react_agent(llm, tools=[...])
 
-# Option 1: Use with callbacks
-result = agent.invoke(
-    {"input": "What's the weather?"},
-    config={"callbacks": [handler]}
-)
-
-# Option 2: Manual tracing with intermediate steps
-result = agent.invoke(
-    {"input": "Calculate 2+2"},
-    return_intermediate_steps=True
-)
-handler.trace_from_result(
-    input_text="Calculate 2+2",
-    result=result,
-    provider="openai",
-    model="gpt-4"
-)
+def run_with_tracing(query: str):
+    start = time.perf_counter()
+    result = agent.invoke({"messages": [("human", query)]})
+    duration = (time.perf_counter() - start) * 1000
+    
+    # Extract tool calls from message history
+    tool_calls = []
+    for msg in result["messages"]:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                tool_calls.append({
+                    "name": tc["name"],
+                    "input": tc["args"],
+                    "output": None  # Match with ToolMessage
+                })
+    
+    final_output = result["messages"][-1].content
+    
+    client.trace(
+        provider="openai",
+        model="gpt-4o",
+        input_text=query,
+        output_text=final_output,
+        duration_ms=duration,
+        tool_calls=tool_calls if tool_calls else None
+    )
+    
+    return final_output
 ```
 
-### AutoGen
+### OpenAI Direct
 
 ```python
+import openai
 from cert import CertClient
-from cert.integrations.autogen import CERTAutoGenHandler
+import time
 
-client = CertClient(api_key="cert_xxx")
-handler = CERTAutoGenHandler(client)
+client = CertClient(api_key=key, project="openai-app")
 
-# Trace a conversation
-result = handler.trace_conversation(
-    initiator=user_proxy,
-    recipient=assistant,
-    message="What's the weather in NYC?"
-)
+def traced_completion(messages: list, model: str = "gpt-4o"):
+    start = time.perf_counter()
+    
+    response = openai.chat.completions.create(
+        model=model,
+        messages=messages
+    )
+    
+    duration = (time.perf_counter() - start) * 1000
+    
+    client.trace(
+        provider="openai",
+        model=model,
+        input_text=messages[-1]["content"],
+        output_text=response.choices[0].message.content,
+        duration_ms=duration,
+        prompt_tokens=response.usage.prompt_tokens,
+        completion_tokens=response.usage.completion_tokens
+    )
+    
+    return response
 ```
 
-### CrewAI
+### Anthropic Direct
 
 ```python
+import anthropic
 from cert import CertClient
-from cert.integrations.crewai import CERTCrewAIHandler
+import time
 
-client = CertClient(api_key="cert_xxx")
-handler = CERTCrewAIHandler(client)
+client = CertClient(api_key=key, project="anthropic-app")
+anthropic_client = anthropic.Anthropic()
 
-# Trace crew execution
-result = handler.trace_crew(
-    crew=my_crew,
-    inputs={"topic": "AI safety research"}
-)
+def traced_message(prompt: str, model: str = "claude-sonnet-4-20250514"):
+    start = time.perf_counter()
+    
+    response = anthropic_client.messages.create(
+        model=model,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    duration = (time.perf_counter() - start) * 1000
+    
+    client.trace(
+        provider="anthropic",
+        model=model,
+        input_text=prompt,
+        output_text=response.content[0].text,
+        duration_ms=duration,
+        prompt_tokens=response.usage.input_tokens,
+        completion_tokens=response.usage.output_tokens
+    )
+    
+    return response
 ```
 
-## Automatic Context Extraction
-
-In agentic mode, the SDK automatically extracts context from tool outputs. This is critical for computing reliability metrics like SGI (Source-Grounding Index).
-
-```python
-# These are equivalent:
-
-# Manual context construction
-context = "[search]: {'results': ['doc1', 'doc2']}\n\n[calculate]: 42"
-client.trace(context=context, tool_calls=tool_calls, ...)
-
-# Automatic extraction (default)
-client.trace(tool_calls=tool_calls, ...)  # Context extracted automatically!
-```
-
-To disable automatic extraction:
-
-```python
-client = CertClient(api_key="cert_xxx", auto_extract_context=False)
-```
+---
 
 ## Configuration
 
+### Environment Variables
+
+```bash
+export CERT_API_KEY="cert_xxx"
+export CERT_PROJECT="my-project"
+export CERT_DASHBOARD_URL="https://dashboard.cert-framework.com"
+```
+
 ```python
+import os
+from cert import CertClient
+
 client = CertClient(
-    api_key="cert_xxx",
-    dashboard_url="https://dashboard.cert-framework.com",
-    batch_size=10,              # Traces per batch (default: 10)
-    flush_interval=5.0,         # Seconds between flushes (default: 5.0)
-    max_queue_size=1000,        # Max queued traces (default: 1000)
-    timeout=5.0,                # HTTP timeout (default: 5.0)
-    auto_extract_context=True,  # Auto-extract context from tools (default: True)
+    api_key=os.environ["CERT_API_KEY"],
+    project=os.environ.get("CERT_PROJECT", "default")
 )
 ```
 
-## Utility Functions
-
-### Manual Context Extraction
+### Google Colab
 
 ```python
-from cert import extract_context_from_tool_calls
+from google.colab import userdata
+from cert import CertClient
 
-tool_calls = [
-    {"name": "search", "output": {"results": ["doc1", "doc2"]}},
-    {"name": "calculate", "output": 42},
-    {"name": "api_call", "error": "Connection timeout"},
-]
-
-context = extract_context_from_tool_calls(tool_calls)
-# Result:
-# [search]: {"results": ["doc1", "doc2"]}
-#
-# [calculate]: 42
-#
-# [api_call] ERROR: Connection timeout
+client = CertClient(
+    api_key=userdata.get("CERT_API_KEY"),
+    project="colab-experiments"
+)
 ```
 
-## Statistics
+### Logging
+
+Enable debug logging to see trace activity:
 
 ```python
-stats = client.get_stats()
-print(f"Sent: {stats['traces_sent']}")
-print(f"Failed: {stats['traces_failed']}")
-print(f"Queued: {stats['traces_queued']}")
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("cert").setLevel(logging.DEBUG)
 ```
 
-## Dashboard
+---
 
-View your traces at [dashboard.cert-framework.com](https://dashboard.cert-framework.com):
+## Best Practices
 
-- Real-time monitoring
-- Reliability metrics (SGI, NLI scores, grounding)
-- Cost analysis
-- EU AI Act compliance reports
-- Model comparison
+### Project Organization
+
+| Use Case | Project Name |
+|----------|--------------|
+| Production traffic | `myapp-prod` |
+| Staging environment | `myapp-staging` |
+| A/B test variant | `myapp-experiment-v2` |
+| Agentic evaluation | `myapp-agentic` |
+| RAG evaluation | `myapp-rag` |
+
+### Graceful Shutdown
+
+Always flush and close in production:
+
+```python
+import atexit
+
+client = CertClient(api_key=key, project="prod")
+atexit.register(client.close)
+```
+
+### Batch Processing
+
+For high-throughput applications, adjust batch settings:
+
+```python
+client = CertClient(
+    api_key=key,
+    project="high-volume",
+    batch_size=50,           # Larger batches
+    flush_interval=2.0,      # More frequent flushes
+    max_queue_size=5000      # Larger queue
+)
+```
+
+### Sensitive Data
+
+Avoid logging PII in traces. Sanitize inputs/outputs if needed:
+
+```python
+def sanitize(text: str) -> str:
+    # Remove emails, phone numbers, etc.
+    return re.sub(r'\S+@\S+', '[EMAIL]', text)
+
+client.trace(
+    ...,
+    input_text=sanitize(user_input),
+    output_text=sanitize(response)
+)
+```
+
+---
+
+## Troubleshooting
+
+### Traces Not Appearing
+
+1. **Check API key:** Ensure `api_key` is valid
+2. **Flush before exit:** Call `client.flush()` before program ends
+3. **Check stats:** `client.get_stats()` shows sent/failed counts
+4. **Enable logging:** Set `logging.getLogger("cert").setLevel(logging.DEBUG)`
+
+### High Memory Usage
+
+Reduce queue size for memory-constrained environments:
+
+```python
+client = CertClient(..., max_queue_size=100)
+```
+
+### Network Timeouts
+
+Increase timeout for slow networks:
+
+```python
+client = CertClient(..., timeout=15.0)
+```
+
+---
+
+## Changelog
+
+### v0.3.0
+
+- Added distributed tracing: `trace_id`, `span_id`, `parent_span_id`
+- Added timing fields: `start_time`, `end_time`
+- Added status tracking: `status`, `error_message`
+- Added `TraceContext` context manager
+- Added `total_tokens` auto-computation
+- `trace()` now returns `trace_id` for correlation
+
+### v0.2.0
+
+- Added `project` parameter for trace organization
+- Added `eval_mode` auto-detection
+- Added `tool_calls` for agentic evaluation
+- Added `goal_description` for task objectives
+
+### v0.1.0
+
+- Initial release
+- Non-blocking trace collection
+- Background batch sending
+
+---
 
 ## License
 
-Apache 2.0
+MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## Links
+
+- **Dashboard:** [dashboard.cert-framework.com](https://dashboard.cert-framework.com)
+- **GitHub:** [github.com/Javihaus/cert-sdk](https://github.com/Javihaus/cert-sdk)
+- **Issues:** [github.com/Javihaus/cert-sdk/issues](https://github.com/Javihaus/cert-sdk/issues)
