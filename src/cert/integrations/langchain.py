@@ -109,11 +109,11 @@ class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc,valid-type]
     
     def __init__(
         self,
-        cert_client: Any,  # CertClient, but Any to avoid import cycle
-        default_provider: str = "openai",
-        default_model: str = "unknown",
+        cert_client: "CertClient",
+        default_provider: str = "openai",  # More sensible default
+        default_model: str = "gpt-4",      # Better than "unknown"
         auto_flush: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the LangChain handler.
         
@@ -137,6 +137,88 @@ class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc,valid-type]
         
         # Track active runs
         self._runs: Dict[str, _AgentRun] = {}
+
+    # === Helper methods ===
+
+    def _extract_model_from_serialized(
+        self, serialized: Dict[str, Any]
+    ) -> Tuple[str, str]:
+        """Extract provider and model from serialized chain/LLM config.
+        
+        Handles various LangChain patterns:
+        - Direct LLM configs (ChatOpenAI, ChatAnthropic, etc.)
+        - Chain configs with nested LLM
+        - Agent configs
+        """
+        provider = self.default_provider
+        model = self.default_model
+        
+        # Common locations for model info
+        kwargs = serialized.get("kwargs", {})
+        
+        # Try direct model_name (most common)
+        model_name = kwargs.get("model_name") or kwargs.get("model")
+        
+        # Try nested LLM config (common in chains)
+        if not model_name:
+            llm_config = kwargs.get("llm", {})
+            if isinstance(llm_config, dict):
+                llm_kwargs = llm_config.get("kwargs", {})
+                model_name = llm_kwargs.get("model_name") or llm_kwargs.get("model")
+        
+        # Try from serialized ID (e.g., ["langchain", "chat_models", "openai", "ChatOpenAI"])
+        if not model_name:
+            serialized_id = serialized.get("id", [])
+            if serialized_id:
+                model_name = serialized_id[-1]  # Last element is usually class name
+        
+        if model_name:
+            model = model_name
+            provider = self._infer_provider(model_name, serialized)
+        
+        return provider, model
+    
+    
+    def _infer_provider(self, model_name: str, serialized: Dict[str, Any]) -> str:
+        """Infer provider from model name and serialized data."""
+        model_lower = model_name.lower()
+        serialized_str = str(serialized).lower()
+        
+        # OpenAI patterns
+        if any(p in model_lower for p in ["gpt", "o1", "davinci", "curie", "babbage"]):
+            return "openai"
+        if "openai" in serialized_str or "chatopenai" in serialized_str:
+            return "openai"
+        
+        # Anthropic patterns
+        if any(p in model_lower for p in ["claude", "anthropic"]):
+            return "anthropic"
+        if "anthropic" in serialized_str or "chatanthropic" in serialized_str:
+            return "anthropic"
+        
+        # Google patterns
+        if any(p in model_lower for p in ["gemini", "palm", "bard"]):
+            return "google"
+        if "google" in serialized_str or "chatgoogle" in serialized_str:
+            return "google"
+        
+        # Azure OpenAI
+        if "azure" in model_lower or "azure" in serialized_str:
+            return "azure"
+        
+        # AWS Bedrock
+        if "bedrock" in serialized_str:
+            return "bedrock"
+        
+        # Mistral
+        if "mistral" in model_lower or "mixtral" in model_lower:
+            return "mistral"
+        
+        # Ollama (local)
+        if "ollama" in serialized_str:
+            return "ollama"
+        
+        return self.default_provider
     
     # === Chain/Agent Lifecycle ===
     
@@ -157,17 +239,22 @@ class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc,valid-type]
         # Extract input text
         input_text = inputs.get("input", inputs.get("query", str(inputs)))
         if isinstance(input_text, list):
-            # Handle message list
             input_text = self._messages_to_string(input_text)
+        
+        # NEW: Try to extract model info from chain's serialized config
+        provider, model = self._extract_model_from_serialized(serialized)
         
         self._runs[run_id_str] = _AgentRun(
             run_id=run_id_str,
             input_text=str(input_text),
             start_time=time.time(),
+            provider=provider,  # NEW: Set initial provider
+            model=model,        # NEW: Set initial model
             metadata=metadata or {},
         )
         
         logger.debug(f"CERT LangChain: Chain started {run_id_str}")
+
     
     def on_chain_end(
         self,
@@ -193,6 +280,14 @@ class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc,valid-type]
         # Calculate duration
         duration_ms = (time.time() - run.start_time) * 1000
         
+        # NEW: Log warning if we still have unknown provider/model
+        if run.provider == "unknown" or run.model == "unknown":
+            logger.warning(
+                f"CERT LangChain: Could not detect provider/model for chain {run_id_str}. "
+                f"Using defaults: provider={run.provider}, model={run.model}. "
+                "Consider using trace_from_result() for manual control."
+            )
+        
         # Send trace to CERT
         self.cert_client.trace(
             provider=run.provider,
@@ -204,20 +299,18 @@ class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc,valid-type]
             completion_tokens=run.completion_tokens,
             eval_mode="agentic" if run.tool_calls else "generation",
             tool_calls=run.tool_calls if run.tool_calls else None,
-            goal_description=run.input_text,  # Use input as goal
+            goal_description=run.input_text,
             metadata={
                 "langchain_run_id": run.run_id,
+                "langchain_detected_provider": run.provider,
+                "langchain_detected_model": run.model,
                 **run.metadata,
             },
         )
         
         if self.auto_flush:
             self.cert_client.flush()
-        
-        logger.debug(
-            f"CERT LangChain: Traced chain {run_id_str} "
-            f"with {len(run.tool_calls)} tool calls"
-        )
+
     
     def on_chain_error(
         self,
