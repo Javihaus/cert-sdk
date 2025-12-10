@@ -17,7 +17,7 @@ from cert.types import EvalMode, SpanKind, ToolCall, TraceStatus
 
 import requests
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 logger = logging.getLogger(__name__)
 
@@ -278,52 +278,52 @@ class CertClient:
                     "(no SGI, grounding, or NLI available)."
                 )
 
-        # Build payload - field names match DB columns (camelCase for JSON)
+        # Build payload - field names match framework's expected snake_case
         trace_data: Dict[str, Any] = {
             # Identity
             "id": str(uuid.uuid4()),
-            "traceId": _trace_id,
-            "spanId": _span_id,
+            "trace_id": _trace_id,
+            "span_id": _span_id,
             # Operation
             "name": _name,
             "kind": kind,
             "source": "cert-sdk",
-            # Project
-            "project": self.project,
-            # LLM details - NOTE: provider → vendor
-            "vendor": provider,
-            "model": model,
-            "inputText": input_text,
-            "outputText": output_text,
+            # Project (name for backend to resolve to project_id)
+            "project_name": self.project,
+            # LLM details - framework field names
+            "llm_vendor": provider,
+            "llm_model": model,
+            "input_text": input_text,
+            "output_text": output_text,
             # Tokens
-            "promptTokens": prompt_tokens,
-            "completionTokens": completion_tokens,
-            "totalTokens": prompt_tokens + completion_tokens,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
             # Timing
-            "durationMs": duration_ms,
-            "startTime": _start_time.isoformat(),
-            "endTime": _end_time.isoformat(),
+            "duration_ms": duration_ms,
+            "start_time": _start_time.isoformat(),
+            "end_time": _end_time.isoformat(),
             # Status
             "status": status,
             # Evaluation
-            "evalMode": resolved_mode,
+            "eval_mode": resolved_mode,
             # Metadata
             "metadata": metadata or {},
         }
 
         # === Conditional fields (only if present) ===
         if parent_span_id is not None:
-            trace_data["parentSpanId"] = parent_span_id
+            trace_data["parent_span_id"] = parent_span_id
         if error_message is not None:
-            trace_data["errorMessage"] = error_message
+            trace_data["error_message"] = error_message
         if effective_context is not None:
             trace_data["context"] = effective_context
         if output_schema is not None:
-            trace_data["outputSchema"] = output_schema
+            trace_data["output_schema"] = output_schema
         if tool_calls is not None:
-            trace_data["toolCalls"] = tool_calls
+            trace_data["tool_calls"] = tool_calls
         if goal_description is not None:
-            trace_data["goalDescription"] = goal_description
+            trace_data["goal_description"] = goal_description
 
         try:
             self._queue.put_nowait(trace_data)
