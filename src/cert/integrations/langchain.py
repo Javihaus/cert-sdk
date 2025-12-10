@@ -35,27 +35,29 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union, Sequence
+from typing import Any, Dict, List, Optional, Union, Sequence, TYPE_CHECKING
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
 
 # Check if langchain is available
+LANGCHAIN_AVAILABLE = False
 try:
     from langchain_core.callbacks import BaseCallbackHandler
     from langchain_core.agents import AgentAction, AgentFinish
     from langchain_core.outputs import LLMResult
     from langchain_core.messages import BaseMessage
     LANGCHAIN_AVAILABLE = True
+    _LangChainBase = BaseCallbackHandler
 except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    # Create stub for type hints
-    BaseCallbackHandler = object
-    AgentAction = Any
-    AgentFinish = Any
-    LLMResult = Any
-    BaseMessage = Any
+    _LangChainBase = object  # type: ignore[misc,assignment]
+    if TYPE_CHECKING:
+        # Stubs for type checking when langchain is not installed
+        AgentAction = Any
+        AgentFinish = Any
+        LLMResult = Any
+        BaseMessage = Any
 
 
 @dataclass
@@ -74,7 +76,7 @@ class _AgentRun:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class CERTLangChainHandler(BaseCallbackHandler if LANGCHAIN_AVAILABLE else object):
+class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc]
     """
     LangChain callback handler for CERT tracing.
     
