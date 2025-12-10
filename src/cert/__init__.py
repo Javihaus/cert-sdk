@@ -6,9 +6,9 @@ with automatic context extraction for agentic pipelines.
 
 Quick Start:
     >>> from cert import CertClient
-    >>> 
+    >>>
     >>> client = CertClient(api_key="cert_xxx")
-    >>> 
+    >>>
     >>> # RAG Mode - with explicit context
     >>> client.trace(
     ...     provider="anthropic",
@@ -18,7 +18,7 @@ Quick Start:
     ...     duration_ms=234,
     ...     context="France is a country in Europe. Its capital is Paris.",
     ... )
-    >>> 
+    >>>
     >>> # Agentic Mode - tool outputs become context automatically
     >>> client.trace(
     ...     provider="openai",
@@ -31,19 +31,29 @@ Quick Start:
     ...     ]
     ... )
 
+Using TraceContext for automatic timing:
+    >>> from cert import CertClient, TraceContext
+    >>>
+    >>> client = CertClient(api_key="cert_xxx")
+    >>>
+    >>> with TraceContext(client, provider="openai", model="gpt-4", input_text="Hello") as ctx:
+    ...     response = llm.invoke(prompt)
+    ...     ctx.set_output(response.content)
+    ...     ctx.set_tokens(response.usage.input, response.usage.output)
+
 Framework Integrations:
     The SDK provides optional integrations for popular agent frameworks:
-    
+
     >>> # LangChain
     >>> from cert.integrations.langchain import CERTLangChainHandler
     >>> handler = CERTLangChainHandler(client)
     >>> agent.invoke({"input": "..."}, config={"callbacks": [handler]})
-    
+
     >>> # AutoGen
     >>> from cert.integrations.autogen import CERTAutoGenHandler
     >>> handler = CERTAutoGenHandler(client)
     >>> result = handler.trace_conversation(initiator, recipient, message)
-    
+
     >>> # CrewAI
     >>> from cert.integrations.crewai import CERTCrewAIHandler
     >>> handler = CERTCrewAIHandler(client)
@@ -56,19 +66,21 @@ Evaluation Modes:
     - "auto": Automatically detect based on context and tool_calls
 """
 
-from cert.client import CertClient, extract_context_from_tool_calls
-from cert.types import EvalMode, ToolCall
-
-__version__ = "0.1.0"
+from cert.client import CertClient, TraceContext, __version__, extract_context_from_tool_calls
+from cert.types import EvalMode, SpanKind, ToolCall, TraceStatus
 
 __all__ = [
     # Core client
     "CertClient",
-    
+    "TraceContext",
+    "__version__",
+
     # Utility functions
     "extract_context_from_tool_calls",
-    
+
     # Type definitions
     "EvalMode",
+    "SpanKind",
+    "TraceStatus",
     "ToolCall",
 ]
