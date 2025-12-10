@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
+from cert.types import EvalMode
+
 logger = logging.getLogger(__name__)
 
 # Check if CrewAI is available
@@ -128,7 +130,7 @@ class CERTCrewAIHandler:
         self._wrapped_tools: Dict[int, Dict[str, Any]] = {}
 
         # Track original tool methods on agents
-        self._original_tool_methods: Dict[int, Dict[str, Callable]] = {}
+        self._original_tool_methods: Dict[int, Dict[int, bool]] = {}
 
     # =========================================================================
     # Public API
@@ -729,7 +731,7 @@ class CERTCrewAIHandler:
             )
 
         # Determine eval mode
-        eval_mode = "agentic" if run.tool_calls else "generation"
+        eval_mode: EvalMode = "agentic" if run.tool_calls else "generation"
 
         # Build context from tool outputs if agentic
         context = None
