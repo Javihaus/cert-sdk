@@ -186,7 +186,7 @@ def test_auto_generates_span_id(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["spanId"].startswith("span-")
+    assert trace["span_id"].startswith("span-")
     client.close()
 
 
@@ -210,7 +210,7 @@ def test_total_tokens_computed(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["totalTokens"] == 150
+    assert trace["total_tokens"] == 150
     client.close()
 
 
@@ -232,8 +232,9 @@ def test_provider_maps_to_vendor(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["vendor"] == "anthropic"
+    assert trace["llm_vendor"] == "anthropic"
     assert "provider" not in trace
+    assert "vendor" not in trace
     client.close()
 
 
@@ -255,10 +256,8 @@ def test_input_output_field_names(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["inputText"] == "Hello input"
-    assert trace["outputText"] == "Hi output!"
-    assert "input" not in trace
-    assert "output" not in trace
+    assert trace["input_text"] == "Hello input"
+    assert trace["output_text"] == "Hi output!"
     client.close()
 
 
@@ -282,9 +281,9 @@ def test_timing_fields_included(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert "startTime" in trace
-    assert "endTime" in trace
-    assert trace["startTime"] == start.isoformat()
+    assert "start_time" in trace
+    assert "end_time" in trace
+    assert trace["start_time"] == start.isoformat()
     client.close()
 
 
@@ -309,7 +308,7 @@ def test_status_and_error(mock_post):
     trace = call_args.kwargs["json"]["traces"][0]
 
     assert trace["status"] == "error"
-    assert trace["errorMessage"] == "API timeout"
+    assert trace["error_message"] == "API timeout"
     client.close()
 
 
@@ -398,7 +397,7 @@ def test_project_field(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["project"] == "my-project"
+    assert trace["project_name"] == "my-project"
     client.close()
 
 
@@ -466,7 +465,7 @@ def test_parent_span_id(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["parentSpanId"] == "parent-span-123"
+    assert trace["parent_span_id"] == "parent-span-123"
     client.close()
 
 
@@ -492,7 +491,7 @@ def test_trace_id_can_be_provided(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["traceId"] == custom_trace_id
+    assert trace["trace_id"] == custom_trace_id
     client.close()
 
 
@@ -521,7 +520,7 @@ def test_explicit_rag_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "rag"
+    assert trace["eval_mode"] == "rag"
     assert trace["context"] == "some retrieved context"
     client.close()
 
@@ -546,7 +545,7 @@ def test_auto_detect_rag_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "rag"
+    assert trace["eval_mode"] == "rag"
     client.close()
 
 
@@ -569,7 +568,7 @@ def test_explicit_generation_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "generation"
+    assert trace["eval_mode"] == "generation"
     assert "context" not in trace
     client.close()
 
@@ -593,7 +592,7 @@ def test_auto_detect_generation_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "generation"
+    assert trace["eval_mode"] == "generation"
     client.close()
 
 
@@ -618,8 +617,8 @@ def test_generation_mode_with_output_schema(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "generation"
-    assert trace["outputSchema"] == schema
+    assert trace["eval_mode"] == "generation"
+    assert trace["output_schema"] == schema
     client.close()
 
 
@@ -646,8 +645,8 @@ def test_explicit_agentic_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "agentic"
-    assert trace["toolCalls"] == tool_calls
+    assert trace["eval_mode"] == "agentic"
+    assert trace["tool_calls"] == tool_calls
     client.close()
 
 
@@ -672,7 +671,7 @@ def test_auto_detect_agentic_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "agentic"
+    assert trace["eval_mode"] == "agentic"
     client.close()
 
 
@@ -698,8 +697,8 @@ def test_agentic_with_goal_description(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "agentic"
-    assert trace["goalDescription"] == "Find and summarize information"
+    assert trace["eval_mode"] == "agentic"
+    assert trace["goal_description"] == "Find and summarize information"
     client.close()
 
 
@@ -728,7 +727,7 @@ def test_empty_tool_calls_resolves_to_generation(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "generation"
+    assert trace["eval_mode"] == "generation"
     client.close()
 
 
@@ -752,7 +751,7 @@ def test_whitespace_context_resolves_to_generation(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "generation"
+    assert trace["eval_mode"] == "generation"
     client.close()
 
 
@@ -779,7 +778,7 @@ def test_tool_calls_takes_precedence_over_context(mock_post):
     trace = call_args.kwargs["json"]["traces"][0]
 
     # tool_calls wins over context
-    assert trace["evalMode"] == "agentic"
+    assert trace["eval_mode"] == "agentic"
     client.close()
 
 
@@ -851,15 +850,15 @@ def test_optional_fields_not_included_when_none(mock_post):
 
     # These optional fields should not be present
     assert "context" not in trace
-    assert "outputSchema" not in trace
-    assert "toolCalls" not in trace
-    assert "goalDescription" not in trace
-    assert "parentSpanId" not in trace
-    assert "errorMessage" not in trace
+    assert "output_schema" not in trace
+    assert "tool_calls" not in trace
+    assert "goal_description" not in trace
+    assert "parent_span_id" not in trace
+    assert "error_message" not in trace
 
     # These required fields should be present
-    assert "evalMode" in trace
-    assert trace["evalMode"] == "generation"
+    assert "eval_mode" in trace
+    assert trace["eval_mode"] == "generation"
 
     client.close()
 
@@ -953,7 +952,7 @@ def test_agentic_auto_extracts_context(mock_post):
     assert "context" in trace
     assert "[weather]:" in trace["context"]
     assert '"temp": 72' in trace["context"]
-    assert trace["evalMode"] == "agentic"
+    assert trace["eval_mode"] == "agentic"
 
     client.close()
 
@@ -1049,7 +1048,7 @@ def test_auto_mode_with_tools_extracts_context(mock_post):
     trace = call_args.kwargs["json"]["traces"][0]
 
     # Should resolve to agentic and auto-extract context
-    assert trace["evalMode"] == "agentic"
+    assert trace["eval_mode"] == "agentic"
     assert "context" in trace
     assert "[calc]: 100" in trace["context"]
 
@@ -1133,12 +1132,12 @@ def test_trace_context_automatic_timing(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["durationMs"] > 0
-    assert "startTime" in trace
-    assert "endTime" in trace
-    assert trace["promptTokens"] == 10
-    assert trace["completionTokens"] == 20
-    assert trace["outputText"] == "response"
+    assert trace["duration_ms"] > 0
+    assert "start_time" in trace
+    assert "end_time" in trace
+    assert trace["prompt_tokens"] == 10
+    assert trace["completion_tokens"] == 20
+    assert trace["output_text"] == "response"
     assert trace["status"] == "success"
 
     client.close()
@@ -1160,7 +1159,7 @@ def test_trace_context_error_capture(mock_post):
     trace = call_args.kwargs["json"]["traces"][0]
 
     assert trace["status"] == "error"
-    assert "Test error" in trace["errorMessage"]
+    assert "Test error" in trace["error_message"]
 
     client.close()
 
@@ -1187,8 +1186,8 @@ def test_trace_context_with_extra_kwargs(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["evalMode"] == "agentic"
-    assert trace["toolCalls"] == tool_calls
+    assert trace["eval_mode"] == "agentic"
+    assert trace["tool_calls"] == tool_calls
 
     client.close()
 
@@ -1236,11 +1235,11 @@ def test_minimal_trace_backward_compatible(mock_post):
     trace = call_args.kwargs["json"]["traces"][0]
 
     # Should have auto-generated all required fields
-    assert "traceId" in trace
-    assert "spanId" in trace
+    assert "trace_id" in trace
+    assert "span_id" in trace
     assert "name" in trace
     assert trace["status"] == "success"
-    assert trace["evalMode"] == "generation"
+    assert trace["eval_mode"] == "generation"
 
     client.close()
 
@@ -1265,4 +1264,4 @@ def test_version_import():
     """Test that version can be imported."""
     from cert import __version__
 
-    assert __version__ == "0.3.0"
+    assert __version__ == "0.3.1"
