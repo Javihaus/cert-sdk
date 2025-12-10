@@ -76,7 +76,7 @@ class _AgentRun:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc]
+class CERTLangChainHandler(_LangChainBase):  # type: ignore[misc,valid-type]
     """
     LangChain callback handler for CERT tracing.
     
