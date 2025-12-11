@@ -33,7 +33,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from cert.types import EvalMode
+from cert.types import EvaluationMode, ContextSource
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,29 @@ class _AgentRun:
     completion_tokens: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # NEW v0.4.0 fields
+    knowledge_base: Optional[str] = None
+    context_source: Optional[ContextSource] = None
+
+    def build_knowledge_base(self) -> Optional[str]:
+        """
+        Build knowledge base from tool outputs.
+
+        Returns:
+            Concatenated knowledge string or None
+        """
+        parts = []
+        for tc in self.tool_calls:
+            if tc.get("output") is not None:
+                name = tc.get("name", "tool")
+                output = tc["output"]
+                if isinstance(output, (dict, list)):
+                    output_str = json.dumps(output, ensure_ascii=False, default=str)
+                else:
+                    output_str = str(output)
+                parts.append(f"[{name}]: {output_str}")
+        return "\n\n".join(parts) if parts else None
+
 
 class CERTLangChainHandler(BaseCallbackHandler):
     """CERT callback handler for LangChain chains and agents.
@@ -87,11 +110,16 @@ class CERTLangChainHandler(BaseCallbackHandler):
     - Model information and token usage
     - Timing information
 
+    Automatically extracts knowledge base from tool outputs for
+    grounded evaluation.
+
     Args:
         cert_client: Initialized CertClient instance
         default_provider: Default provider if detection fails (default: "openai")
         default_model: Default model if detection fails (default: "gpt-4")
         auto_flush: Whether to flush after each chain completion (default: True)
+        auto_extract_knowledge: Automatically extract knowledge from tool outputs
+                                (default: True)
 
     Example:
         >>> from cert import CertClient
@@ -111,6 +139,7 @@ class CERTLangChainHandler(BaseCallbackHandler):
         default_provider: str = "openai",
         default_model: str = "gpt-4",
         auto_flush: bool = True,
+        auto_extract_knowledge: bool = True,
     ) -> None:
         if not LANGCHAIN_AVAILABLE:
             raise ImportError(
@@ -122,6 +151,7 @@ class CERTLangChainHandler(BaseCallbackHandler):
         self.default_provider = default_provider
         self.default_model = default_model
         self.auto_flush = auto_flush
+        self.auto_extract_knowledge = auto_extract_knowledge
 
         # Track active runs
         self._runs: Dict[str, _AgentRun] = {}
@@ -411,23 +441,17 @@ class CERTLangChainHandler(BaseCallbackHandler):
                 "Consider using trace_from_result() for manual control."
             )
 
-        # Determine eval mode
-        eval_mode: EvalMode = "agentic" if run.tool_calls else "generation"
+        # Build knowledge base from tool outputs
+        knowledge_base: Optional[str] = None
+        context_source: Optional[ContextSource] = None
 
-        # Build context from tool outputs if agentic
-        context = None
-        if run.tool_calls:
-            tool_outputs = []
-            for tc in run.tool_calls:
-                if tc.get("output"):
-                    output_str = (
-                        json.dumps(tc["output"], default=str)
-                        if isinstance(tc["output"], (dict, list))
-                        else str(tc["output"])
-                    )
-                    tool_outputs.append(f"[{tc['name']}]: {output_str}")
-            if tool_outputs:
-                context = "\n\n".join(tool_outputs)
+        if self.auto_extract_knowledge and run.tool_calls:
+            knowledge_base = run.build_knowledge_base()
+            if knowledge_base:
+                context_source = "tools"
+
+        # Determine evaluation mode
+        evaluation_mode: EvaluationMode = "grounded" if knowledge_base else "ungrounded"
 
         # Send trace to CERT
         self.cert_client.trace(
@@ -438,8 +462,9 @@ class CERTLangChainHandler(BaseCallbackHandler):
             duration_ms=duration_ms,
             prompt_tokens=run.prompt_tokens,
             completion_tokens=run.completion_tokens,
-            eval_mode=eval_mode,
-            context=context,
+            evaluation_mode=evaluation_mode,
+            knowledge_base=knowledge_base,
+            context_source=context_source,
             tool_calls=run.tool_calls if run.tool_calls else None,
             goal_description=run.input_text,
             metadata={
@@ -486,6 +511,7 @@ class CERTLangChainHandler(BaseCallbackHandler):
             duration_ms=duration_ms,
             status="error",
             error_message=str(error),
+            evaluation_mode="ungrounded",
             metadata={
                 "langchain_run_id": run.run_id,
                 "langchain_error": True,
@@ -758,10 +784,12 @@ class CERTLangChainHandler(BaseCallbackHandler):
                     }
                     tool_calls.append(tool_call)
 
-        # Build context from tool outputs
-        context = None
-        if tool_calls:
-            tool_outputs = []
+        # Build knowledge base from tool outputs
+        knowledge_base: Optional[str] = None
+        context_source: Optional[ContextSource] = None
+
+        if self.auto_extract_knowledge and tool_calls:
+            parts = []
             for tc in tool_calls:
                 if tc.get("output"):
                     output_str = (
@@ -769,9 +797,13 @@ class CERTLangChainHandler(BaseCallbackHandler):
                         if isinstance(tc["output"], (dict, list))
                         else str(tc["output"])
                     )
-                    tool_outputs.append(f"[{tc['name']}]: {output_str}")
-            if tool_outputs:
-                context = "\n\n".join(tool_outputs)
+                    parts.append(f"[{tc['name']}]: {output_str}")
+            if parts:
+                knowledge_base = "\n\n".join(parts)
+                context_source = "tools"
+
+        # Determine evaluation mode
+        evaluation_mode: EvaluationMode = "grounded" if knowledge_base else "ungrounded"
 
         self.cert_client.trace(
             provider=provider,
@@ -779,8 +811,9 @@ class CERTLangChainHandler(BaseCallbackHandler):
             input_text=input_text,
             output_text=str(output_text),
             duration_ms=duration_ms or 0,
-            eval_mode="agentic" if tool_calls else "generation",
-            context=context,
+            evaluation_mode=evaluation_mode,
+            knowledge_base=knowledge_base,
+            context_source=context_source,
             tool_calls=tool_calls if tool_calls else None,
             goal_description=input_text,
             metadata=metadata or {},
@@ -800,4 +833,3 @@ class CERTLangChainHandler(BaseCallbackHandler):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit context manager - flush pending traces."""
         self.cert_client.flush()
-
