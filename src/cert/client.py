@@ -318,7 +318,7 @@ class CertClient:
 
         # Build trace data with NEW field names
         now = datetime.now(timezone.utc)
-        trace_data = {
+        trace_data: Dict[str, Any] = {
             # Identity
             "id": str(uuid.uuid4()),
             "trace_id": _trace_id,
