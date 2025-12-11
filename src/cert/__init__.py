@@ -1,86 +1,46 @@
 """
-CERT SDK for LLM monitoring and reliability evaluation.
+CERT SDK - LLM Monitoring for Production Applications
 
-The CERT SDK provides non-blocking tracing for production AI systems
-with automatic context extraction for agentic pipelines.
-
-Quick Start:
-    >>> from cert import CertClient
-    >>>
-    >>> client = CertClient(api_key="cert_xxx")
-    >>>
-    >>> # RAG Mode - with explicit context
-    >>> client.trace(
-    ...     provider="anthropic",
-    ...     model="claude-sonnet-4",
-    ...     input_text="What is the capital of France?",
-    ...     output_text="The capital of France is Paris.",
-    ...     duration_ms=234,
-    ...     context="France is a country in Europe. Its capital is Paris.",
-    ... )
-    >>>
-    >>> # Agentic Mode - tool outputs become context automatically
-    >>> client.trace(
-    ...     provider="openai",
-    ...     model="gpt-4",
-    ...     input_text="What's the weather in NYC?",
-    ...     output_text="It's 72°F and sunny in NYC.",
-    ...     duration_ms=1500,
-    ...     tool_calls=[
-    ...         {"name": "weather_api", "output": {"temp": 72, "condition": "sunny"}}
-    ...     ]
-    ... )
-
-Using TraceContext for automatic timing:
-    >>> from cert import CertClient, TraceContext
-    >>>
-    >>> client = CertClient(api_key="cert_xxx")
-    >>>
-    >>> with TraceContext(client, provider="openai", model="gpt-4", input_text="Hello") as ctx:
-    ...     response = llm.invoke(prompt)
-    ...     ctx.set_output(response.content)
-    ...     ctx.set_tokens(response.usage.input, response.usage.output)
-
-Framework Integrations:
-    The SDK provides optional integrations for popular agent frameworks:
-
-    >>> # LangChain
-    >>> from cert.integrations.langchain import CERTLangChainHandler
-    >>> handler = CERTLangChainHandler(client)
-    >>> agent.invoke({"input": "..."}, config={"callbacks": [handler]})
-
-    >>> # AutoGen
-    >>> from cert.integrations.autogen import CERTAutoGenHandler
-    >>> handler = CERTAutoGenHandler(client)
-    >>> result = handler.trace_conversation(initiator, recipient, message)
-
-    >>> # CrewAI
-    >>> from cert.integrations.crewai import CERTCrewAIHandler
-    >>> handler = CERTCrewAIHandler(client)
-    >>> result = handler.trace_crew(crew, inputs={"topic": "..."})
-
-Evaluation Modes:
-    - "rag": Full metrics (semantic, NLI, grounding, SGI) with explicit context
-    - "agentic": Tool outputs serve as context, enabling full RAG metrics
-    - "generation": Reduced metrics without context (quality signals only)
-    - "auto": Automatically detect based on context and tool_calls
+Two-mode evaluation architecture (v0.4.0+):
+- Grounded: Has knowledge_base -> full metric suite
+- Ungrounded: No knowledge_base -> basic metrics
 """
 
-from cert.client import CertClient, TraceContext, __version__, extract_context_from_tool_calls
-from cert.types import EvalMode, SpanKind, ToolCall, TraceStatus
+from cert.client import (
+    CertClient,
+    TraceContext,
+    extract_knowledge_from_tool_calls,
+    # Backwards compatibility
+    extract_context_from_tool_calls,
+    __version__,
+)
+
+from cert.types import (
+    # New types (v0.4.0+)
+    EvaluationMode,
+    ContextSource,
+    SpanKind,
+    ToolCall,
+    TraceStatus,
+    # Deprecated types
+    EvalMode,
+)
 
 __all__ = [
-    # Core client
+    # Client
     "CertClient",
     "TraceContext",
-    "__version__",
-
-    # Utility functions
-    "extract_context_from_tool_calls",
-
-    # Type definitions
-    "EvalMode",
+    # Types (new)
+    "EvaluationMode",
+    "ContextSource",
     "SpanKind",
-    "TraceStatus",
     "ToolCall",
+    "TraceStatus",
+    # Utilities
+    "extract_knowledge_from_tool_calls",
+    # Backwards compatibility (deprecated)
+    "EvalMode",
+    "extract_context_from_tool_calls",
+    # Version
+    "__version__",
 ]

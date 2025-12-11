@@ -1,12 +1,22 @@
 """Tests for CERT client."""
 
 import time
+import warnings
 from datetime import datetime, timezone
 from unittest.mock import Mock, patch
 
 import pytest
 
-from cert import CertClient, TraceContext, EvalMode, SpanKind, TraceStatus, ToolCall
+from cert import (
+    CertClient,
+    TraceContext,
+    EvalMode,
+    EvaluationMode,
+    ContextSource,
+    SpanKind,
+    TraceStatus,
+    ToolCall,
+)
 from cert.client import _validate_tool_calls
 
 
@@ -359,7 +369,7 @@ def test_custom_operation_name(mock_post):
 
 @patch("cert.client.requests.post")
 def test_source_field(mock_post):
-    """Test source field is set to cert-sdk."""
+    """Test source field is set to sdk."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -375,7 +385,7 @@ def test_source_field(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["source"] == "cert-sdk"
+    assert trace["source"] == "sdk"
     client.close()
 
 
@@ -496,13 +506,13 @@ def test_trace_id_can_be_provided(mock_post):
 
 
 # ============================================================================
-# Eval Mode Tests
+# Evaluation Mode Tests (v0.4.0 - New API)
 # ============================================================================
 
 
 @patch("cert.client.requests.post")
-def test_explicit_rag_mode(mock_post):
-    """Test explicit RAG mode with context."""
+def test_grounded_mode_with_knowledge_base(mock_post):
+    """Test grounded mode with knowledge_base."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -512,22 +522,26 @@ def test_explicit_rag_mode(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="rag",
-        context="some retrieved context",
+        evaluation_mode="grounded",
+        knowledge_base="some retrieved context",
+        context_source="retrieval",
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "rag"
+    assert trace["evaluation_mode"] == "grounded"
+    assert trace["knowledge_base"] == "some retrieved context"
+    assert trace["context_source"] == "retrieval"
+    # Also check backwards compatibility field
     assert trace["context"] == "some retrieved context"
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_auto_detect_rag_mode(mock_post):
-    """Test auto-detection resolves to RAG when context is provided."""
+def test_auto_detect_grounded_mode(mock_post):
+    """Test auto-detection resolves to grounded when knowledge_base is provided."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -537,21 +551,21 @@ def test_auto_detect_rag_mode(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="auto",
-        context="some context",
+        evaluation_mode="auto",
+        knowledge_base="some context",
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "rag"
+    assert trace["evaluation_mode"] == "grounded"
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_explicit_generation_mode(mock_post):
-    """Test explicit generation mode."""
+def test_ungrounded_mode(mock_post):
+    """Test ungrounded mode."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -561,21 +575,22 @@ def test_explicit_generation_mode(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="generation",
+        evaluation_mode="ungrounded",
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "generation"
+    assert trace["evaluation_mode"] == "ungrounded"
+    assert "knowledge_base" not in trace
     assert "context" not in trace
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_auto_detect_generation_mode(mock_post):
-    """Test auto-detection resolves to generation when no context or tool_calls."""
+def test_auto_detect_ungrounded_mode(mock_post):
+    """Test auto-detection resolves to ungrounded when no knowledge_base or tool_calls."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -585,20 +600,20 @@ def test_auto_detect_generation_mode(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="auto",
+        evaluation_mode="auto",
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "generation"
+    assert trace["evaluation_mode"] == "ungrounded"
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_generation_mode_with_output_schema(mock_post):
-    """Test generation mode with output_schema."""
+def test_ungrounded_mode_with_output_schema(mock_post):
+    """Test ungrounded mode with output_schema."""
     mock_post.return_value = Mock(status_code=200)
 
     schema = {"type": "object", "properties": {"name": {"type": "string"}}}
@@ -609,7 +624,7 @@ def test_generation_mode_with_output_schema(mock_post):
         input_text="question",
         output_text='{"name": "test"}',
         duration_ms=100,
-        eval_mode="generation",
+        evaluation_mode="ungrounded",
         output_schema=schema,
     )
 
@@ -617,14 +632,14 @@ def test_generation_mode_with_output_schema(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "generation"
+    assert trace["evaluation_mode"] == "ungrounded"
     assert trace["output_schema"] == schema
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_explicit_agentic_mode(mock_post):
-    """Test explicit agentic mode with tool_calls."""
+def test_grounded_mode_with_tool_calls(mock_post):
+    """Test grounded mode with tool_calls."""
     mock_post.return_value = Mock(status_code=200)
 
     tool_calls = [
@@ -637,25 +652,27 @@ def test_explicit_agentic_mode(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="agentic",
+        evaluation_mode="grounded",
         tool_calls=tool_calls,
+        context_source="tools",
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "agentic"
+    assert trace["evaluation_mode"] == "grounded"
     assert trace["tool_calls"] == tool_calls
+    assert trace["context_source"] == "tools"
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_auto_detect_agentic_mode(mock_post):
-    """Test auto-detection resolves to agentic when tool_calls provided."""
+def test_auto_detect_grounded_with_tool_calls(mock_post):
+    """Test auto-detection resolves to grounded when tool_calls have outputs."""
     mock_post.return_value = Mock(status_code=200)
 
-    tool_calls = [{"name": "get_weather", "input": {"city": "NYC"}}]
+    tool_calls = [{"name": "get_weather", "input": {"city": "NYC"}, "output": {"temp": 72}}]
     client = CertClient(api_key="test_key", batch_size=1)
     client.trace(
         provider="test",
@@ -663,7 +680,7 @@ def test_auto_detect_agentic_mode(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="auto",
+        evaluation_mode="auto",
         tool_calls=tool_calls,
     )
 
@@ -671,16 +688,19 @@ def test_auto_detect_agentic_mode(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "agentic"
+    assert trace["evaluation_mode"] == "grounded"
+    assert trace["context_source"] == "tools"
+    # Knowledge should be auto-extracted
+    assert "[get_weather]:" in trace["knowledge_base"]
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_agentic_with_goal_description(mock_post):
-    """Test agentic mode with goal_description."""
+def test_grounded_with_goal_description(mock_post):
+    """Test grounded mode with goal_description."""
     mock_post.return_value = Mock(status_code=200)
 
-    tool_calls = [{"name": "search", "input": {}}]
+    tool_calls = [{"name": "search", "input": {}, "output": "data"}]
     client = CertClient(api_key="test_key", batch_size=1)
     client.trace(
         provider="test",
@@ -688,7 +708,7 @@ def test_agentic_with_goal_description(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="agentic",
+        evaluation_mode="grounded",
         tool_calls=tool_calls,
         goal_description="Find and summarize information",
     )
@@ -697,8 +717,98 @@ def test_agentic_with_goal_description(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "agentic"
+    assert trace["evaluation_mode"] == "grounded"
     assert trace["goal_description"] == "Find and summarize information"
+    client.close()
+
+
+# ============================================================================
+# Legacy API Tests (Backwards Compatibility)
+# ============================================================================
+
+
+@patch("cert.client.requests.post")
+def test_legacy_rag_mode(mock_post):
+    """Test legacy eval_mode='rag' maps to evaluation_mode='grounded'."""
+    mock_post.return_value = Mock(status_code=200)
+
+    client = CertClient(api_key="test_key", batch_size=1)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        client.trace(
+            provider="test",
+            model="m",
+            input_text="question",
+            output_text="answer",
+            duration_ms=100,
+            eval_mode="rag",
+            context="some retrieved context",
+        )
+        assert any("eval_mode is deprecated" in str(warning.message) for warning in w)
+        assert any("context is deprecated" in str(warning.message) for warning in w)
+
+    time.sleep(0.3)
+    call_args = mock_post.call_args
+    trace = call_args.kwargs["json"]["traces"][0]
+
+    # Should be mapped to new values
+    assert trace["evaluation_mode"] == "grounded"
+    assert trace["knowledge_base"] == "some retrieved context"
+    # Also check backwards compat field
+    assert trace["context"] == "some retrieved context"
+    client.close()
+
+
+@patch("cert.client.requests.post")
+def test_legacy_generation_mode(mock_post):
+    """Test legacy eval_mode='generation' maps to evaluation_mode='ungrounded'."""
+    mock_post.return_value = Mock(status_code=200)
+
+    client = CertClient(api_key="test_key", batch_size=1)
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        client.trace(
+            provider="test",
+            model="m",
+            input_text="question",
+            output_text="answer",
+            duration_ms=100,
+            eval_mode="generation",
+        )
+
+    time.sleep(0.3)
+    call_args = mock_post.call_args
+    trace = call_args.kwargs["json"]["traces"][0]
+
+    assert trace["evaluation_mode"] == "ungrounded"
+    client.close()
+
+
+@patch("cert.client.requests.post")
+def test_legacy_agentic_mode(mock_post):
+    """Test legacy eval_mode='agentic' maps to evaluation_mode='grounded'."""
+    mock_post.return_value = Mock(status_code=200)
+
+    tool_calls = [{"name": "search", "input": {}, "output": "results"}]
+    client = CertClient(api_key="test_key", batch_size=1)
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        client.trace(
+            provider="test",
+            model="m",
+            input_text="question",
+            output_text="answer",
+            duration_ms=100,
+            eval_mode="agentic",
+            tool_calls=tool_calls,
+        )
+
+    time.sleep(0.3)
+    call_args = mock_post.call_args
+    trace = call_args.kwargs["json"]["traces"][0]
+
+    assert trace["evaluation_mode"] == "grounded"
+    assert trace["context_source"] == "tools"
     client.close()
 
 
@@ -708,8 +818,8 @@ def test_agentic_with_goal_description(mock_post):
 
 
 @patch("cert.client.requests.post")
-def test_empty_tool_calls_resolves_to_generation(mock_post):
-    """Test empty tool_calls list resolves to generation, not agentic."""
+def test_empty_tool_calls_resolves_to_ungrounded(mock_post):
+    """Test empty tool_calls list resolves to ungrounded, not grounded."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -719,7 +829,7 @@ def test_empty_tool_calls_resolves_to_generation(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="auto",
+        evaluation_mode="auto",
         tool_calls=[],  # Empty list
     )
 
@@ -727,13 +837,13 @@ def test_empty_tool_calls_resolves_to_generation(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "generation"
+    assert trace["evaluation_mode"] == "ungrounded"
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_whitespace_context_resolves_to_generation(mock_post):
-    """Test whitespace-only context resolves to generation, not rag."""
+def test_whitespace_knowledge_base_resolves_to_grounded(mock_post):
+    """Test whitespace knowledge_base still counts as grounded."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -743,24 +853,25 @@ def test_whitespace_context_resolves_to_generation(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="auto",
-        context="   ",  # Whitespace only
+        evaluation_mode="auto",
+        knowledge_base="   ",  # Whitespace only (but still a value)
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "generation"
+    # Note: whitespace is still treated as a knowledge_base
+    assert trace["evaluation_mode"] == "grounded"
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_tool_calls_takes_precedence_over_context(mock_post):
-    """Test tool_calls takes precedence over context in auto mode."""
+def test_explicit_knowledge_base_takes_precedence_over_tool_calls(mock_post):
+    """Test that explicit knowledge_base is used when both provided."""
     mock_post.return_value = Mock(status_code=200)
 
-    tool_calls = [{"name": "retrieve", "input": {}}]
+    tool_calls = [{"name": "retrieve", "input": {}, "output": "auto extracted"}]
     client = CertClient(api_key="test_key", batch_size=1)
     client.trace(
         provider="test",
@@ -768,17 +879,18 @@ def test_tool_calls_takes_precedence_over_context(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="auto",
+        evaluation_mode="grounded",
         tool_calls=tool_calls,
-        context="some context",  # Both provided
+        knowledge_base="EXPLICIT KNOWLEDGE",
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    # tool_calls wins over context
-    assert trace["eval_mode"] == "agentic"
+    # Explicit knowledge base should be used
+    assert trace["knowledge_base"] == "EXPLICIT KNOWLEDGE"
+    assert "auto extracted" not in trace["knowledge_base"]
     client.close()
 
 
@@ -849,83 +961,85 @@ def test_optional_fields_not_included_when_none(mock_post):
     trace = call_args.kwargs["json"]["traces"][0]
 
     # These optional fields should not be present
+    assert "knowledge_base" not in trace
     assert "context" not in trace
     assert "output_schema" not in trace
     assert "tool_calls" not in trace
     assert "goal_description" not in trace
     assert "parent_span_id" not in trace
     assert "error_message" not in trace
+    assert "context_source" not in trace
 
     # These required fields should be present
-    assert "eval_mode" in trace
-    assert trace["eval_mode"] == "generation"
+    assert "evaluation_mode" in trace
+    assert trace["evaluation_mode"] == "ungrounded"
 
     client.close()
 
 
 # ============================================================================
-# Automatic Context Extraction Tests
+# Automatic Knowledge Extraction Tests
 # ============================================================================
 
 
-def test_extract_context_from_tool_calls_basic():
-    """Test basic context extraction from tool calls."""
-    from cert.client import extract_context_from_tool_calls
+def test_extract_knowledge_from_tool_calls_basic():
+    """Test basic knowledge extraction from tool calls."""
+    from cert.client import extract_knowledge_from_tool_calls
 
     tool_calls = [
         {"name": "search", "output": {"results": ["doc1", "doc2"]}},
         {"name": "calculate", "output": 42},
     ]
 
-    context = extract_context_from_tool_calls(tool_calls)
+    knowledge = extract_knowledge_from_tool_calls(tool_calls)
 
-    assert "[search]:" in context
-    assert '["doc1", "doc2"]' in context
-    assert "[calculate]: 42" in context
+    assert "[search]:" in knowledge
+    assert '["doc1", "doc2"]' in knowledge
+    assert "[calculate]: 42" in knowledge
 
 
-def test_extract_context_from_tool_calls_with_error():
-    """Test context extraction includes errors."""
-    from cert.client import extract_context_from_tool_calls
+def test_extract_knowledge_from_tool_calls_with_error():
+    """Test knowledge extraction includes errors."""
+    from cert.client import extract_knowledge_from_tool_calls
 
     tool_calls = [
         {"name": "api_call", "error": "Connection timeout"},
         {"name": "search", "output": "results"},
     ]
 
-    context = extract_context_from_tool_calls(tool_calls)
+    knowledge = extract_knowledge_from_tool_calls(tool_calls)
 
-    assert "[api_call] ERROR: Connection timeout" in context
-    assert "[search]: results" in context
-
-
-def test_extract_context_from_tool_calls_empty():
-    """Test context extraction with empty list."""
-    from cert.client import extract_context_from_tool_calls
-
-    context = extract_context_from_tool_calls([])
-
-    assert context == ""
+    assert "[api_call] ERROR: Connection timeout" in knowledge
+    assert "[search]: results" in knowledge
 
 
-def test_extract_context_skips_none_output():
-    """Test context extraction skips tools with no output or error."""
-    from cert.client import extract_context_from_tool_calls
+def test_extract_knowledge_from_tool_calls_empty():
+    """Test knowledge extraction with empty list."""
+    from cert.client import extract_knowledge_from_tool_calls
+
+    knowledge = extract_knowledge_from_tool_calls([])
+
+    assert knowledge == ""
+
+
+def test_extract_knowledge_skips_none_output():
+    """Test knowledge extraction skips tools with no output or error."""
+    from cert.client import extract_knowledge_from_tool_calls
 
     tool_calls = [
         {"name": "pending_tool"},  # No output or error
         {"name": "completed", "output": "done"},
     ]
 
-    context = extract_context_from_tool_calls(tool_calls)
+    knowledge = extract_knowledge_from_tool_calls(tool_calls)
 
-    assert "pending_tool" not in context
-    assert "[completed]: done" in context
+    assert "pending_tool" not in knowledge
+    assert "[completed]: done" in knowledge
 
 
 @patch("cert.client.requests.post")
-def test_agentic_auto_extracts_context(mock_post):
-    """Test that agentic mode automatically extracts context from tool_calls."""
+def test_grounded_auto_extracts_knowledge(mock_post):
+    """Test that grounded mode automatically extracts knowledge from tool_calls."""
     mock_post.return_value = Mock(status_code=200)
 
     tool_calls = [
@@ -939,27 +1053,28 @@ def test_agentic_auto_extracts_context(mock_post):
         input_text="What's the weather?",
         output_text="It's 72°F and sunny",
         duration_ms=100,
-        eval_mode="agentic",
+        evaluation_mode="grounded",
         tool_calls=tool_calls,
-        # Note: NO context provided - should be auto-extracted!
+        # Note: NO knowledge_base provided - should be auto-extracted!
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    # Context should be auto-extracted
-    assert "context" in trace
-    assert "[weather]:" in trace["context"]
-    assert '"temp": 72' in trace["context"]
-    assert trace["eval_mode"] == "agentic"
+    # Knowledge should be auto-extracted
+    assert "knowledge_base" in trace
+    assert "[weather]:" in trace["knowledge_base"]
+    assert '"temp": 72' in trace["knowledge_base"]
+    assert trace["evaluation_mode"] == "grounded"
+    assert trace["context_source"] == "tools"
 
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_agentic_explicit_context_takes_precedence(mock_post):
-    """Test that explicit context overrides auto-extraction."""
+def test_explicit_knowledge_base_takes_precedence(mock_post):
+    """Test that explicit knowledge_base overrides auto-extraction."""
     mock_post.return_value = Mock(status_code=200)
 
     tool_calls = [
@@ -973,25 +1088,25 @@ def test_agentic_explicit_context_takes_precedence(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="agentic",
+        evaluation_mode="grounded",
         tool_calls=tool_calls,
-        context="EXPLICIT CONTEXT",  # Should take precedence
+        knowledge_base="EXPLICIT KNOWLEDGE",  # Should take precedence
     )
 
     time.sleep(0.3)
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    # Explicit context should be used, not auto-extracted
-    assert trace["context"] == "EXPLICIT CONTEXT"
-    assert "auto-extracted" not in trace["context"]
+    # Explicit knowledge should be used, not auto-extracted
+    assert trace["knowledge_base"] == "EXPLICIT KNOWLEDGE"
+    assert "auto-extracted" not in trace["knowledge_base"]
 
     client.close()
 
 
 @patch("cert.client.requests.post")
 def test_auto_extract_disabled(mock_post):
-    """Test that auto_extract_context=False disables extraction."""
+    """Test that auto_extract_knowledge=False disables extraction."""
     mock_post.return_value = Mock(status_code=200)
 
     tool_calls = [
@@ -1001,7 +1116,7 @@ def test_auto_extract_disabled(mock_post):
     client = CertClient(
         api_key="test_key",
         batch_size=1,
-        auto_extract_context=False,  # Disable auto-extraction
+        auto_extract_knowledge=False,  # Disable auto-extraction
     )
     client.trace(
         provider="test",
@@ -1009,7 +1124,7 @@ def test_auto_extract_disabled(mock_post):
         input_text="question",
         output_text="answer",
         duration_ms=100,
-        eval_mode="agentic",
+        evaluation_mode="grounded",
         tool_calls=tool_calls,
     )
 
@@ -1017,15 +1132,15 @@ def test_auto_extract_disabled(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    # Context should NOT be present
-    assert "context" not in trace
+    # Knowledge should NOT be present
+    assert "knowledge_base" not in trace
 
     client.close()
 
 
 @patch("cert.client.requests.post")
-def test_auto_mode_with_tools_extracts_context(mock_post):
-    """Test that auto mode + tools auto-extracts context."""
+def test_auto_mode_with_tools_extracts_knowledge(mock_post):
+    """Test that auto mode + tools auto-extracts knowledge."""
     mock_post.return_value = Mock(status_code=200)
 
     tool_calls = [
@@ -1039,7 +1154,7 @@ def test_auto_mode_with_tools_extracts_context(mock_post):
         input_text="calculate",
         output_text="100",
         duration_ms=100,
-        eval_mode="auto",  # Auto mode
+        evaluation_mode="auto",  # Auto mode
         tool_calls=tool_calls,
     )
 
@@ -1047,17 +1162,18 @@ def test_auto_mode_with_tools_extracts_context(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    # Should resolve to agentic and auto-extract context
-    assert trace["eval_mode"] == "agentic"
-    assert "context" in trace
-    assert "[calc]: 100" in trace["context"]
+    # Should resolve to grounded and auto-extract knowledge
+    assert trace["evaluation_mode"] == "grounded"
+    assert "knowledge_base" in trace
+    assert "[calc]: 100" in trace["knowledge_base"]
+    assert trace["context_source"] == "tools"
 
     client.close()
 
 
-def test_extract_context_complex_json():
-    """Test context extraction handles complex nested JSON."""
-    from cert.client import extract_context_from_tool_calls
+def test_extract_knowledge_complex_json():
+    """Test knowledge extraction handles complex nested JSON."""
+    from cert.client import extract_knowledge_from_tool_calls
 
     tool_calls = [
         {
@@ -1075,40 +1191,40 @@ def test_extract_context_complex_json():
         },
     ]
 
-    context = extract_context_from_tool_calls(tool_calls)
+    knowledge = extract_knowledge_from_tool_calls(tool_calls)
 
-    assert "[api_response]:" in context
-    assert "Alice" in context
-    assert "Bob" in context
-    assert '"total": 2' in context
+    assert "[api_response]:" in knowledge
+    assert "Alice" in knowledge
+    assert "Bob" in knowledge
+    assert '"total": 2' in knowledge
 
 
-def test_extract_context_string_output():
-    """Test context extraction handles string outputs."""
-    from cert.client import extract_context_from_tool_calls
+def test_extract_knowledge_string_output():
+    """Test knowledge extraction handles string outputs."""
+    from cert.client import extract_knowledge_from_tool_calls
 
     tool_calls = [
         {"name": "read_file", "output": "File content here\nWith multiple lines"},
     ]
 
-    context = extract_context_from_tool_calls(tool_calls)
+    knowledge = extract_knowledge_from_tool_calls(tool_calls)
 
-    assert "[read_file]: File content here\nWith multiple lines" in context
+    assert "[read_file]: File content here\nWith multiple lines" in knowledge
 
 
-def test_extract_context_numeric_output():
-    """Test context extraction handles numeric outputs."""
-    from cert.client import extract_context_from_tool_calls
+def test_extract_knowledge_numeric_output():
+    """Test knowledge extraction handles numeric outputs."""
+    from cert.client import extract_knowledge_from_tool_calls
 
     tool_calls = [
         {"name": "calculate", "output": 3.14159},
         {"name": "count", "output": 42},
     ]
 
-    context = extract_context_from_tool_calls(tool_calls)
+    knowledge = extract_knowledge_from_tool_calls(tool_calls)
 
-    assert "[calculate]: 3.14159" in context
-    assert "[count]: 42" in context
+    assert "[calculate]: 3.14159" in knowledge
+    assert "[count]: 42" in knowledge
 
 
 # ============================================================================
@@ -1177,7 +1293,7 @@ def test_trace_context_with_extra_kwargs(mock_post):
         provider="openai",
         model="gpt-4",
         input_text="test",
-        eval_mode="agentic",
+        evaluation_mode="grounded",
         tool_calls=tool_calls
     ) as ctx:
         ctx.set_output("response")
@@ -1186,7 +1302,7 @@ def test_trace_context_with_extra_kwargs(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["eval_mode"] == "agentic"
+    assert trace["evaluation_mode"] == "grounded"
     assert trace["tool_calls"] == tool_calls
 
     client.close()
@@ -1208,6 +1324,28 @@ def test_trace_context_provides_trace_id(mock_post):
     client.close()
 
 
+@patch("cert.client.requests.post")
+def test_trace_context_set_knowledge_base(mock_post):
+    """Test TraceContext set_knowledge_base method."""
+    mock_post.return_value = Mock(status_code=200)
+
+    client = CertClient(api_key="test_key", batch_size=1)
+
+    with TraceContext(client, provider="openai", model="gpt-4", input_text="test") as ctx:
+        ctx.set_knowledge_base("Retrieved document content", source="retrieval")
+        ctx.set_output("response")
+
+    time.sleep(0.3)
+    call_args = mock_post.call_args
+    trace = call_args.kwargs["json"]["traces"][0]
+
+    assert trace["knowledge_base"] == "Retrieved document content"
+    assert trace["context_source"] == "retrieval"
+    assert trace["evaluation_mode"] == "grounded"
+
+    client.close()
+
+
 # ============================================================================
 # Backward Compatibility Tests
 # ============================================================================
@@ -1215,13 +1353,12 @@ def test_trace_context_provides_trace_id(mock_post):
 
 @patch("cert.client.requests.post")
 def test_minimal_trace_backward_compatible(mock_post):
-    """Test minimal trace call (v0.2.x style) still works."""
+    """Test minimal trace call still works."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
 
-    # This is how v0.2.x code would call trace()
-    # (note: trace() now returns trace_id, which old code would ignore)
+    # This is how code would call trace() with minimal args
     client.trace(
         provider="openai",
         model="gpt-4",
@@ -1239,8 +1376,27 @@ def test_minimal_trace_backward_compatible(mock_post):
     assert "span_id" in trace
     assert "name" in trace
     assert trace["status"] == "success"
-    assert trace["eval_mode"] == "generation"
+    assert trace["evaluation_mode"] == "ungrounded"
 
+    client.close()
+
+
+@patch("cert.client.requests.post")
+def test_legacy_auto_extract_context_parameter(mock_post):
+    """Test legacy auto_extract_context parameter with deprecation warning."""
+    mock_post.return_value = Mock(status_code=200)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        client = CertClient(
+            api_key="test_key",
+            batch_size=1,
+            auto_extract_context=False,  # DEPRECATED
+        )
+        assert any("auto_extract_context is deprecated" in str(warning.message) for warning in w)
+
+    # Should still work
+    assert client.auto_extract_knowledge is False
     client.close()
 
 
@@ -1251,10 +1407,12 @@ def test_minimal_trace_backward_compatible(mock_post):
 
 def test_type_imports():
     """Test that all types can be imported from cert module."""
-    from cert import EvalMode, SpanKind, TraceStatus, ToolCall
+    from cert import EvalMode, EvaluationMode, ContextSource, SpanKind, TraceStatus, ToolCall
 
     # Types should be available
     assert EvalMode is not None
+    assert EvaluationMode is not None
+    assert ContextSource is not None
     assert SpanKind is not None
     assert TraceStatus is not None
     assert ToolCall is not None
@@ -1264,4 +1422,14 @@ def test_version_import():
     """Test that version can be imported."""
     from cert import __version__
 
-    assert __version__ == "0.3.1"
+    assert __version__ == "0.4.0"
+
+
+# Backwards compatibility test for extract_context_from_tool_calls
+def test_extract_context_from_tool_calls_alias():
+    """Test that extract_context_from_tool_calls is an alias for extract_knowledge_from_tool_calls."""
+    from cert import extract_context_from_tool_calls, extract_knowledge_from_tool_calls
+
+    tool_calls = [{"name": "test", "output": "result"}]
+
+    assert extract_context_from_tool_calls(tool_calls) == extract_knowledge_from_tool_calls(tool_calls)

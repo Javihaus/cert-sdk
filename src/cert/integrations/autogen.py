@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
-from cert.types import EvalMode
+from cert.types import EvaluationMode, ContextSource
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,37 @@ class _ConversationRun:
     duration_ms: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # NEW v0.4.0 fields
+    knowledge_base: Optional[str] = None
+    context_source: Optional[ContextSource] = None
+
+    def build_knowledge_base(self) -> Optional[str]:
+        """
+        Build unified knowledge base from conversation history and tool outputs.
+
+        Returns:
+            Concatenated knowledge string or None
+        """
+        parts = []
+
+        # Add tool outputs
+        for tc in self.tool_calls:
+            if tc.get("output") is not None:
+                name = tc.get("name", "tool")
+                output = tc["output"]
+                if isinstance(output, (dict, list)):
+                    output_str = json.dumps(output, ensure_ascii=False, default=str)
+                else:
+                    output_str = str(output)
+                parts.append(f"[{name}]: {output_str}")
+
+        # Add prior assistant messages as conversation context
+        for msg in self.messages[:-1]:  # Exclude current message
+            if msg.get("role") == "assistant" and msg.get("content"):
+                parts.append(f"[prior_response]: {msg['content']}")
+
+        return "\n\n".join(parts) if parts else None
+
 
 class CERTAutoGenHandler:
     """CERT callback handler for AutoGen agents.
@@ -83,11 +114,16 @@ class CERTAutoGenHandler:
     - Model information and token usage
     - Timing information
 
+    Automatically extracts knowledge base from tool outputs and
+    conversation history for grounded evaluation.
+
     Args:
         cert_client: Initialized CertClient instance
         default_provider: Default provider if detection fails (default: "openai")
         default_model: Default model if detection fails (default: "gpt-4")
         auto_flush: Whether to flush after each conversation (default: True)
+        auto_extract_knowledge: Automatically extract knowledge from tool outputs
+                                and conversation history (default: True)
 
     Example:
         >>> from cert import CertClient
@@ -106,6 +142,7 @@ class CERTAutoGenHandler:
         default_provider: str = "openai",
         default_model: str = "gpt-4",
         auto_flush: bool = True,
+        auto_extract_knowledge: bool = True,
     ) -> None:
         if not AUTOGEN_AVAILABLE:
             raise ImportError(
@@ -116,6 +153,7 @@ class CERTAutoGenHandler:
         self.default_provider = default_provider
         self.default_model = default_model
         self.auto_flush = auto_flush
+        self.auto_extract_knowledge = auto_extract_knowledge
 
         # Track active conversation runs
         self._runs: Dict[str, _ConversationRun] = {}
@@ -639,18 +677,19 @@ class CERTAutoGenHandler:
                 "Consider setting llm_config on your agents."
             )
 
-        # Determine eval mode
-        eval_mode: EvalMode = "agentic" if run.tool_calls else "generation"
+        # Build knowledge base from tool outputs + conversation history
+        knowledge_base = None
+        context_source: Optional[ContextSource] = None
 
-        # Build context from tool outputs if agentic
-        context = None
-        if run.tool_calls:
-            tool_outputs = []
-            for tc in run.tool_calls:
-                if tc.get("output"):
-                    tool_outputs.append(f"[{tc['name']}]: {json.dumps(tc['output'])}")
-            if tool_outputs:
-                context = "\n\n".join(tool_outputs)
+        if self.auto_extract_knowledge:
+            knowledge_base = run.build_knowledge_base()
+            if knowledge_base:
+                # Determine source
+                has_tool_outputs = any(tc.get("output") for tc in run.tool_calls)
+                context_source = "tools" if has_tool_outputs else "conversation"
+
+        # Determine evaluation mode
+        evaluation_mode: EvaluationMode = "grounded" if knowledge_base else "ungrounded"
 
         self.cert_client.trace(
             provider=run.provider,
@@ -660,8 +699,9 @@ class CERTAutoGenHandler:
             duration_ms=run.duration_ms,
             prompt_tokens=run.prompt_tokens,
             completion_tokens=run.completion_tokens,
-            eval_mode=eval_mode,
-            context=context,
+            evaluation_mode=evaluation_mode,
+            knowledge_base=knowledge_base,
+            context_source=context_source,
             tool_calls=run.tool_calls if run.tool_calls else None,
             goal_description=run.input_text,
             metadata={
@@ -699,4 +739,3 @@ class CERTAutoGenHandler:
 
         # Flush any remaining traces
         self.cert_client.flush()
-
