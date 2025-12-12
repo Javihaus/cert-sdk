@@ -369,7 +369,7 @@ def test_custom_operation_name(mock_post):
 
 @patch("cert.client.requests.post")
 def test_source_field(mock_post):
-    """Test source field is set to sdk."""
+    """Test source field is set to cert-sdk."""
     mock_post.return_value = Mock(status_code=200)
 
     client = CertClient(api_key="test_key", batch_size=1)
@@ -385,7 +385,7 @@ def test_source_field(mock_post):
     call_args = mock_post.call_args
     trace = call_args.kwargs["json"]["traces"][0]
 
-    assert trace["source"] == "sdk"
+    assert trace["source"] == "cert-sdk"
     client.close()
 
 
@@ -809,6 +809,8 @@ def test_legacy_agentic_mode(mock_post):
 
     assert trace["evaluation_mode"] == "grounded"
     assert trace["context_source"] == "tools"
+    # Legacy eval_mode should be included for backward compatibility
+    assert trace["eval_mode"] == "agentic"
     client.close()
 
 
