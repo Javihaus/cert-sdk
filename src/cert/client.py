@@ -326,7 +326,7 @@ class CertClient:
             "parent_span_id": parent_span_id,
             "name": name or f"{provider}.{model}",
             "kind": kind,
-            "source": "sdk",
+            "source": "cert-sdk",
             # LLM details (use new field names for server)
             "llm_vendor": provider,
             "llm_model": model,
@@ -370,6 +370,10 @@ class CertClient:
             trace_data["tool_calls"] = tool_calls
         if goal_description is not None:
             trace_data["goal_description"] = goal_description
+
+        # Legacy field for backward compatibility with older servers
+        if eval_mode is not None:
+            trace_data["eval_mode"] = eval_mode
 
         try:
             self._queue.put_nowait(trace_data)
