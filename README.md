@@ -1,3 +1,8 @@
+<div align="center">
+<img src="docs/cert_logo3.png" alt="CERT" width="20%" />
+</div>
+
+
 # CERT SDK
 
 [![PyPI version](https://badge.fury.io/py/cert-sdk.svg)](https://badge.fury.io/py/cert-sdk)
