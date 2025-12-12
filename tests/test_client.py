@@ -1424,7 +1424,7 @@ def test_version_import():
     """Test that version can be imported."""
     from cert import __version__
 
-    assert __version__ == "0.4.0"
+    assert __version__ == "0.5.0"
 
 
 # Backwards compatibility test for extract_context_from_tool_calls

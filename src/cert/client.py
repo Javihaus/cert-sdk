@@ -1,7 +1,8 @@
 """
-CERT SDK - Python client for LLM monitoring v0.4.0
+CERT SDK - Python client for LLM monitoring v0.5.0
 
 Two-mode evaluation architecture: Grounded vs Ungrounded
+Bias detection: Demographic bias and custom policies
 """
 
 import json
@@ -26,9 +27,16 @@ from cert.types import (
     EvalMode,
 )
 
+from cert.bias.models import (
+    DemographicBiasConfig,
+    CustomPolicy,
+    BiasSeverity,
+)
+from cert.bias.templates import get_template, list_templates
+
 import requests
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +141,9 @@ class CertClient:
         max_queue_size: int = 1000,
         timeout: float = 5.0,
         auto_extract_knowledge: bool = True,
+        # Bias detection (v0.5.0)
+        demographic_bias: Optional[Union[bool, DemographicBiasConfig]] = True,
+        custom_policy: Optional[Union[str, CustomPolicy]] = None,
         # Deprecated parameter name (backwards compatibility)
         auto_extract_context: Optional[bool] = None,
     ):
@@ -149,6 +160,13 @@ class CertClient:
             timeout: HTTP timeout in seconds (default: 5.0)
             auto_extract_knowledge: Automatically extract knowledge_base from
                                     tool_calls outputs (default: True)
+            demographic_bias: Enable demographic bias detection (v0.5.0)
+                - True: Enable with default config (default)
+                - False: Disable
+                - DemographicBiasConfig: Custom configuration
+            custom_policy: Custom policy for domain-specific bias detection (v0.5.0)
+                - str: Template name (e.g., "financial_services")
+                - CustomPolicy: Custom policy instance
             auto_extract_context: DEPRECATED - use auto_extract_knowledge
         """
         self.api_key = api_key
@@ -168,6 +186,26 @@ class CertClient:
             self.auto_extract_knowledge = auto_extract_context
         else:
             self.auto_extract_knowledge = auto_extract_knowledge
+
+        # Initialize demographic bias config
+        self._demographic_bias_config: Optional[DemographicBiasConfig] = None
+        if demographic_bias is True:
+            self._demographic_bias_config = DemographicBiasConfig()
+        elif isinstance(demographic_bias, DemographicBiasConfig):
+            self._demographic_bias_config = demographic_bias
+        # If False or None, demographic bias is disabled
+
+        # Initialize custom policy
+        self._custom_policy: Optional[CustomPolicy] = None
+        if custom_policy is not None:
+            if isinstance(custom_policy, str):
+                self._custom_policy = get_template(custom_policy)
+            elif isinstance(custom_policy, CustomPolicy):
+                self._custom_policy = custom_policy
+            else:
+                raise TypeError(
+                    f"custom_policy must be str or CustomPolicy, got {type(custom_policy)}"
+                )
 
         self._queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
         self._stop_event = threading.Event()
@@ -200,7 +238,7 @@ class CertClient:
         parent_span_id: Optional[str] = None,
         name: Optional[str] = None,
         kind: SpanKind = "CLIENT",
-        # === EVALUATION CONFIG (NEW v0.4.0) ===
+        # === EVALUATION CONFIG (v0.4.0) ===
         evaluation_mode: EvaluationMode = "auto",
         knowledge_base: Optional[str] = None,
         context_source: Optional[ContextSource] = None,
@@ -209,6 +247,11 @@ class CertClient:
         goal_description: Optional[str] = None,
         # === GENERATION MODE ===
         output_schema: Optional[Dict[str, Any]] = None,
+        # === BIAS DETECTION (v0.5.0) ===
+        task_type: Optional[str] = None,
+        skip_bias_detection: bool = False,
+        demographic_bias_override: Optional[Union[bool, DemographicBiasConfig]] = None,
+        custom_policy_override: Optional[Union[str, CustomPolicy]] = None,
         # === METADATA ===
         metadata: Optional[Dict[str, Any]] = None,
         # === DEPRECATED (v0.3.x compatibility) ===
@@ -254,6 +297,12 @@ class CertClient:
             tool_calls: List of tool/function calls [{name, input, output, error}]
             goal_description: Task goal for completion tracking
             output_schema: Expected output structure for validation
+
+            task_type: Task categorization for custom policy filtering (v0.5.0)
+            skip_bias_detection: Skip bias evaluation for this trace (v0.5.0)
+            demographic_bias_override: Override client-level demographic config (v0.5.0)
+            custom_policy_override: Override client-level custom policy (v0.5.0)
+
             metadata: Additional custom fields
 
             eval_mode: DEPRECATED - Use evaluation_mode instead
@@ -375,6 +424,19 @@ class CertClient:
         if eval_mode is not None:
             trace_data["eval_mode"] = eval_mode
 
+        # Add task_type if provided (for custom policy filtering)
+        if task_type is not None:
+            trace_data["task_type"] = task_type
+
+        # Add bias configuration unless skipped
+        if not skip_bias_detection:
+            bias_config = self._build_bias_config(
+                demographic_bias_override,
+                custom_policy_override,
+            )
+            if bias_config:
+                trace_data["bias_config"] = bias_config
+
         try:
             self._queue.put_nowait(trace_data)
         except queue.Full:
@@ -484,6 +546,147 @@ class CertClient:
         """Context manager cleanup."""
         self.close()
         return False
+
+    # =========================================================================
+    # Bias Configuration Methods
+    # =========================================================================
+
+    def _build_bias_config(
+        self,
+        demographic_override: Optional[Union[bool, DemographicBiasConfig]],
+        policy_override: Optional[Union[str, CustomPolicy]],
+    ) -> Optional[Dict[str, Any]]:
+        """Build bias configuration for trace payload."""
+        config: Dict[str, Any] = {}
+
+        # Determine demographic config to use
+        demographic_config = None
+        if demographic_override is not None:
+            if demographic_override is True:
+                demographic_config = DemographicBiasConfig()
+            elif isinstance(demographic_override, DemographicBiasConfig):
+                demographic_config = demographic_override
+            # If False, leave as None (disabled)
+        else:
+            demographic_config = self._demographic_bias_config
+
+        if demographic_config:
+            config["demographic"] = demographic_config.to_dict()
+
+        # Determine custom policy to use
+        custom_policy = None
+        if policy_override is not None:
+            if isinstance(policy_override, str):
+                custom_policy = get_template(policy_override)
+            elif isinstance(policy_override, CustomPolicy):
+                custom_policy = policy_override
+        else:
+            custom_policy = self._custom_policy
+
+        if custom_policy:
+            config["custom_policy"] = custom_policy.to_dict()
+
+        return config if config else None
+
+    def configure_demographic_bias(
+        self,
+        config: DemographicBiasConfig,
+    ) -> "CertClient":
+        """
+        Set demographic bias configuration.
+
+        Example:
+            config = DemographicBiasConfig()
+            config.enable("political").set_threshold("gender", 0.7)
+            client.configure_demographic_bias(config)
+        """
+        self._demographic_bias_config = config
+        return self
+
+    def enable_demographic_category(self, category_id: str) -> "CertClient":
+        """Enable a specific demographic bias category."""
+        if self._demographic_bias_config is None:
+            self._demographic_bias_config = DemographicBiasConfig()
+        self._demographic_bias_config.enable(category_id)
+        return self
+
+    def disable_demographic_category(self, category_id: str) -> "CertClient":
+        """Disable a specific demographic bias category."""
+        if self._demographic_bias_config:
+            self._demographic_bias_config.disable(category_id)
+        return self
+
+    def set_bias_threshold(
+        self,
+        category_id: str,
+        threshold: float,
+    ) -> "CertClient":
+        """Set detection threshold for a demographic bias category."""
+        if self._demographic_bias_config is None:
+            self._demographic_bias_config = DemographicBiasConfig()
+        self._demographic_bias_config.set_threshold(category_id, threshold)
+        return self
+
+    def set_custom_policy(
+        self,
+        policy: Union[str, CustomPolicy],
+    ) -> "CertClient":
+        """
+        Set custom policy for domain-specific bias detection.
+
+        Args:
+            policy: Template name (str) or CustomPolicy instance
+
+        Example:
+            client.set_custom_policy("financial_services")
+        """
+        if isinstance(policy, str):
+            self._custom_policy = get_template(policy)
+        else:
+            self._custom_policy = policy
+        return self
+
+    def clear_custom_policy(self) -> "CertClient":
+        """Remove custom policy configuration."""
+        self._custom_policy = None
+        return self
+
+    def disable_bias_detection(self) -> "CertClient":
+        """Disable all bias detection."""
+        self._demographic_bias_config = None
+        self._custom_policy = None
+        return self
+
+    # =========================================================================
+    # Static Discovery Methods
+    # =========================================================================
+
+    @staticmethod
+    def list_demographic_categories() -> List[Dict[str, Any]]:
+        """List all available demographic bias categories."""
+        config = DemographicBiasConfig()
+        return [
+            {
+                "id": cat.id,
+                "name": cat.name,
+                "description": cat.description,
+                "consensus": cat.consensus.value,
+                "default_enabled": cat.enabled,
+                "default_threshold": cat.threshold,
+                "default_severity": cat.severity.value,
+            }
+            for cat in config.categories
+        ]
+
+    @staticmethod
+    def list_policy_templates() -> List[Dict[str, Any]]:
+        """List available custom policy templates."""
+        return list_templates()
+
+    @staticmethod
+    def get_policy_template(name: str) -> CustomPolicy:
+        """Get a custom policy template by name."""
+        return get_template(name)
 
 
 class TraceContext:

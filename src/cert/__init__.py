@@ -4,6 +4,10 @@ CERT SDK - LLM Monitoring for Production Applications
 Two-mode evaluation architecture (v0.4.0+):
 - Grounded: Has knowledge_base -> full metric suite
 - Ungrounded: No knowledge_base -> basic metrics
+
+Bias detection (v0.5.0+):
+- Demographic bias: Standard categories (gender, race, etc.)
+- Custom policies: Domain-specific rules
 """
 
 from cert.client import (
@@ -26,6 +30,25 @@ from cert.types import (
     EvalMode,
 )
 
+# Bias detection (v0.5.0+)
+from cert.bias import (
+    # Enums
+    BiasSeverity,
+    BiasConsensus,
+    # Configuration
+    DemographicBiasConfig,
+    DemographicCategory,
+    CustomPolicy,
+    PolicyDimension,
+    # Results
+    CategoryResult,
+    DimensionResult,
+    BiasEvaluationResult,
+    # Templates
+    get_template as get_policy_template,
+    list_templates as list_policy_templates,
+)
+
 __all__ = [
     # Client
     "CertClient",
@@ -41,6 +64,18 @@ __all__ = [
     # Backwards compatibility (deprecated)
     "EvalMode",
     "extract_context_from_tool_calls",
+    # Bias detection (v0.5.0+)
+    "BiasSeverity",
+    "BiasConsensus",
+    "DemographicBiasConfig",
+    "DemographicCategory",
+    "CustomPolicy",
+    "PolicyDimension",
+    "CategoryResult",
+    "DimensionResult",
+    "BiasEvaluationResult",
+    "get_policy_template",
+    "list_policy_templates",
     # Version
     "__version__",
 ]
