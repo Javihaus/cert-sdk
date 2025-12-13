@@ -70,6 +70,10 @@ def extract_context_from_tool_calls(tool_calls: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+# New name (v0.4.0+)
+extract_knowledge_from_tool_calls = extract_context_from_tool_calls
+
+
 class CertClient:
     """
     Non-blocking client for CERT dashboard.
