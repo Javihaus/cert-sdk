@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 import uuid
+import warnings
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -17,7 +18,7 @@ from cert.types import EvalMode, SpanKind, ToolCall, TraceStatus
 
 import requests
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,8 @@ class CertClient:
         flush_interval: float = 5.0,
         max_queue_size: int = 1000,
         timeout: float = 5.0,
-        auto_extract_context: bool = True,
+        auto_extract_knowledge: bool = True,
+        auto_extract_context: Optional[bool] = None,  # DEPRECATED
     ):
         """
         Initialize CERT client.
@@ -146,16 +148,26 @@ class CertClient:
             flush_interval: Seconds between flushes (default: 5.0)
             max_queue_size: Max traces to queue (default: 1000)
             timeout: HTTP timeout in seconds (default: 5.0)
-            auto_extract_context: Automatically extract context from tool_calls
-                                  in agentic mode (default: True)
+            auto_extract_knowledge: Automatically extract knowledge from tool_calls
+                                    in grounded mode (default: True)
+            auto_extract_context: DEPRECATED, use auto_extract_knowledge
         """
+        # Handle deprecated auto_extract_context parameter
+        if auto_extract_context is not None:
+            warnings.warn(
+                "auto_extract_context is deprecated, use auto_extract_knowledge instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            auto_extract_knowledge = auto_extract_context
+
         self.api_key = api_key
         self.project = project
         self.endpoint = f"{dashboard_url.rstrip('/')}/api/v1/traces"
         self.batch_size = batch_size
         self.flush_interval = flush_interval
         self.timeout = timeout
-        self.auto_extract_context = auto_extract_context
+        self.auto_extract_knowledge = auto_extract_knowledge
 
         self._queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
         self._stop_event = threading.Event()
@@ -255,54 +267,81 @@ class CertClient:
         Returns:
             Trace ID (UUID string)
         """
+        # === Handle deprecated parameter warnings ===
+        if eval_mode is not None:
+            warnings.warn(
+                "eval_mode is deprecated, use evaluation_mode instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if context is not None:
+            warnings.warn(
+                "context is deprecated, use knowledge_base instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # === Handle parameter aliases ===
         # evaluation_mode / eval_mode
         effective_eval_mode = evaluation_mode or eval_mode or "auto"
-        
+        legacy_eval_mode = eval_mode  # Keep original for backwards compat field
+
         # knowledge_base / context
-        effective_context = knowledge_base or context
-        
+        effective_knowledge_base = knowledge_base or context
+
         # === Handle timing ===
         effective_duration = duration_ms if duration_ms is not None else 0
-        
+
         # Generate timestamps if not provided
         now = datetime.now(timezone.utc)
         effective_end_time = end_time or now
         effective_start_time = start_time or now
-        
+
         # === Generate IDs ===
         _trace_id = trace_id or str(uuid.uuid4())
         _span_id = span_id or f"span-{uuid.uuid4().hex[:8]}"
         _name = name or f"{provider}.{model}"
 
-        # === Normalize eval_mode ===
+        # === Normalize eval_mode to new API values ===
         mode_mapping = {
-            "grounded": "rag",
-            "ungrounded": "generation",
-            "agentic": "agentic",
+            "grounded": "grounded",
+            "ungrounded": "ungrounded",
+            "agentic": "grounded",  # agentic maps to grounded (tool-based context)
             "auto": "auto",
-            "rag": "rag",
-            "generation": "generation",
+            "rag": "grounded",       # legacy rag -> grounded
+            "generation": "ungrounded",  # legacy generation -> ungrounded
         }
         normalized_mode = mode_mapping.get(effective_eval_mode.lower(), "auto")
-        
+
+        # === Determine effective context_source ===
+        effective_context_source = context_source
+
         # === Auto-detect mode if "auto" ===
         if normalized_mode == "auto":
-            if tool_calls:
-                normalized_mode = "agentic"
-            elif effective_context:
-                normalized_mode = "rag"
+            if tool_calls and len(tool_calls) > 0:
+                normalized_mode = "grounded"
+                if effective_context_source is None:
+                    effective_context_source = "tools"
+            elif effective_knowledge_base:
+                normalized_mode = "grounded"
             else:
-                normalized_mode = "generation"
+                normalized_mode = "ungrounded"
 
-        # === Extract context from tool_calls for agentic mode ===
+        # === Auto-extract knowledge from tool_calls for grounded mode ===
         if (
-            normalized_mode == "agentic"
+            normalized_mode == "grounded"
             and tool_calls
-            and effective_context is None
-            and self.auto_extract_context
+            and len(tool_calls) > 0
+            and effective_knowledge_base is None
+            and self.auto_extract_knowledge
         ):
-            effective_context = extract_context_from_tool_calls(tool_calls)
+            effective_knowledge_base = extract_knowledge_from_tool_calls(tool_calls)
+            if effective_context_source is None:
+                effective_context_source = "tools"
+
+        # === Set context_source to "tools" if tool_calls provided ===
+        if tool_calls and len(tool_calls) > 0 and effective_context_source is None:
+            effective_context_source = "tools"
 
         # === Validate tool_calls ===
         if tool_calls:
@@ -312,29 +351,28 @@ class CertClient:
         effective_metadata = metadata.copy() if metadata else {}
         if task_type:
             effective_metadata["task_type"] = task_type
-        if context_source:
-            effective_metadata["context_source"] = context_source
 
         # === Build trace payload ===
         trace_data = {
-            "id": _trace_id,
+            "trace_id": _trace_id,
             "span_id": _span_id,
             "name": _name,
             "kind": kind,
-            "project": self.project,
-            "vendor": provider,
+            "project_name": self.project,
+            "llm_vendor": provider,
             "model": model,
-            "input": input_text,
-            "output": output_text,
+            "input_text": input_text,
+            "output_text": output_text,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
-            "latency_ms": effective_duration,
-            "eval_mode": normalized_mode,
+            "duration_ms": effective_duration,
+            "evaluation_mode": normalized_mode,
             "status": status,
             "timestamp": effective_end_time.isoformat(),
             "start_time": effective_start_time.isoformat(),
             "end_time": effective_end_time.isoformat(),
+            "source": "cert-sdk",
         }
 
         # === Add optional fields ===
@@ -342,16 +380,22 @@ class CertClient:
             trace_data["parent_span_id"] = parent_span_id
         if error_message:
             trace_data["error_message"] = error_message
-        if effective_context is not None:
-            trace_data["context"] = effective_context
+        if effective_knowledge_base is not None:
+            trace_data["knowledge_base"] = effective_knowledge_base
+            trace_data["context"] = effective_knowledge_base  # backwards compat
         if output_schema is not None:
             trace_data["output_schema"] = output_schema
         if tool_calls is not None:
             trace_data["tool_calls"] = tool_calls
         if goal_description is not None:
             trace_data["goal_description"] = goal_description
+        if effective_context_source is not None:
+            trace_data["context_source"] = effective_context_source
         if effective_metadata:
             trace_data["metadata"] = effective_metadata
+        # Include legacy eval_mode for backwards compatibility
+        if legacy_eval_mode is not None:
+            trace_data["eval_mode"] = legacy_eval_mode
 
         # === Queue the trace ===
         try:
@@ -500,6 +544,8 @@ class TraceContext:
         self.output_text: str = ""
         self.prompt_tokens: int = 0
         self.completion_tokens: int = 0
+        self.knowledge_base: Optional[str] = None
+        self.context_source: Optional[str] = None
 
     def __enter__(self) -> "TraceContext":
         """Start timing when entering the context."""
@@ -515,6 +561,21 @@ class TraceContext:
         self.prompt_tokens = prompt
         self.completion_tokens = completion
 
+    def set_knowledge_base(self, knowledge_base: str, source: Optional[str] = None) -> None:
+        """
+        Set the knowledge base for grounded evaluation.
+
+        Args:
+            knowledge_base: The context/documents for grounded evaluation
+            source: Optional source of the context (e.g., "retrieval", "tools")
+        """
+        self.knowledge_base = knowledge_base
+        if source is not None:
+            self.context_source = source
+        # Also update kwargs to ensure grounded evaluation mode
+        if "evaluation_mode" not in self.kwargs:
+            self.kwargs["evaluation_mode"] = "grounded"
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Log trace when exiting the context."""
         end_time = datetime.now(timezone.utc)
@@ -523,6 +584,13 @@ class TraceContext:
 
         status: TraceStatus = "error" if exc_type else "success"
         error_message = str(exc_val) if exc_val else None
+
+        # Build trace kwargs
+        trace_kwargs = dict(self.kwargs)
+        if self.knowledge_base is not None:
+            trace_kwargs["knowledge_base"] = self.knowledge_base
+        if self.context_source is not None:
+            trace_kwargs["context_source"] = self.context_source
 
         self.client.trace(
             provider=self.provider,
@@ -538,5 +606,5 @@ class TraceContext:
             end_time=end_time,
             status=status,
             error_message=error_message,
-            **self.kwargs,
+            **trace_kwargs,
         )
