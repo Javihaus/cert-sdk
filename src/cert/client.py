@@ -42,17 +42,41 @@ def _validate_tool_calls(tool_calls: List[Dict[str, Any]]) -> None:
 
 def extract_context_from_tool_calls(tool_calls: List[Dict[str, Any]]) -> str:
     """
-    Extract context string from tool call outputs.
-    
-    This is the c_agent = ⊕_i o_i operation from the CERT framework.
-    Tool outputs constitute the implicit context that enables full
-    RAG-mode metrics (SGI, grounding, NLI) in agentic evaluation.
-    
+    Extract knowledge/context string from tool call outputs.
+
+    Concatenates all tool outputs into a formatted string that can be used
+    as knowledge_base for grounded evaluation. This enables faithfulness
+    and grounding metrics for agentic LLM applications.
+
+    Examples:
+        >>> tool_calls = [
+        ...     {"name": "search", "output": {"results": ["doc1", "doc2"]}},
+        ...     {"name": "calculator", "output": 42}
+        ... ]
+        >>> knowledge = extract_context_from_tool_calls(tool_calls)
+        >>> print(knowledge)
+        [search]: {"results": ["doc1", "doc2"]}
+
+        [calculator]: 42
+
+        >>> # Errors are also captured
+        >>> tool_calls = [{"name": "api", "error": "Connection timeout"}]
+        >>> extract_context_from_tool_calls(tool_calls)
+        '[api] ERROR: Connection timeout'
+
     Args:
-        tool_calls: List of tool call dictionaries with 'name', 'output', 'error' keys
-        
+        tool_calls: List of tool call dictionaries. Each dict can have:
+            - "name" (str): Tool name (used as label in output)
+            - "output" (any): Tool response (JSON-serialized if dict/list)
+            - "error" (str): Error message if the tool failed
+
     Returns:
-        Concatenated context string from all tool outputs
+        str: Formatted string with all tool outputs, separated by double newlines.
+            Empty string if no tools have outputs or errors.
+
+    Note:
+        This function is called automatically when auto_extract_knowledge=True
+        (the default) and tool_calls are provided without explicit knowledge_base.
     """
     parts = []
     for tc in tool_calls:
@@ -77,52 +101,75 @@ extract_knowledge_from_tool_calls = extract_context_from_tool_calls
 
 class CertClient:
     """
-    Non-blocking client for CERT dashboard.
+    Non-blocking client for CERT dashboard LLM monitoring.
 
-    Traces are queued and sent in batches via background thread.
-    Never blocks your application.
+    Traces are queued and sent in batches via a background thread,
+    ensuring your application is never blocked by monitoring overhead.
 
-    Example (Minimal - just 4 required params):
-        >>> client = CertClient(api_key="cert_xxx", project="my-app")
-        >>> client.trace(
-        ...     provider="anthropic",
-        ...     model="claude-sonnet-4",
-        ...     input_text="Hello",
-        ...     output_text="Hi there!"
-        ... )
-        
-    Example (With timing):
-        >>> client.trace(
-        ...     provider="openai",
-        ...     model="gpt-4o",
-        ...     input_text="What is 2+2?",
-        ...     output_text="4",
-        ...     duration_ms=234,
-        ...     prompt_tokens=10,
-        ...     completion_tokens=5
-        ... )
-        
-    Example (RAG/Grounded evaluation):
-        >>> client.trace(
-        ...     provider="openai",
-        ...     model="gpt-4o",
-        ...     input_text="What is the capital of France?",
-        ...     output_text="Paris is the capital of France.",
-        ...     knowledge_base="France is a country in Europe. Paris is the capital.",
-        ...     evaluation_mode="grounded"
-        ... )
-        
-    Example (Agentic with tool calls):
-        >>> client.trace(
-        ...     provider="openai",
-        ...     model="gpt-4o",
-        ...     input_text="What's the weather?",
-        ...     output_text="It's 72°F and sunny.",
-        ...     evaluation_mode="agentic",
-        ...     tool_calls=[
-        ...         {"name": "weather_api", "input": {"city": "NYC"}, "output": {"temp": 72}}
-        ...     ]
-        ... )
+    Features:
+        - Non-blocking: trace() returns immediately, data sent asynchronously
+        - Batching: Traces are batched for efficient network usage
+        - Auto-retry: Failed batches are logged but don't crash your app
+        - Context manager: Use with `with` statement for automatic cleanup
+
+    Examples:
+        Basic usage:
+            >>> client = CertClient(api_key="cert_xxx", project="my-app")
+            >>> client.trace(
+            ...     provider="anthropic",
+            ...     model="claude-sonnet-4-20250514",
+            ...     input_text="Hello",
+            ...     output_text="Hi there!"
+            ... )
+            >>> client.close()  # Send remaining traces on shutdown
+
+        As context manager (recommended):
+            >>> with CertClient(api_key="cert_xxx", project="my-app") as client:
+            ...     client.trace(
+            ...         provider="openai",
+            ...         model="gpt-4o",
+            ...         input_text="What is 2+2?",
+            ...         output_text="4",
+            ...         duration_ms=234,
+            ...         prompt_tokens=10,
+            ...         completion_tokens=5
+            ...     )
+            ... # Automatically flushes and closes
+
+        Grounded evaluation (RAG):
+            >>> client.trace(
+            ...     provider="openai",
+            ...     model="gpt-4o",
+            ...     input_text="What is the capital of France?",
+            ...     output_text="Paris is the capital of France.",
+            ...     knowledge_base="France is a country in Europe. Paris is the capital.",
+            ...     evaluation_mode="grounded"
+            ... )
+
+        With tool calls (knowledge auto-extracted):
+            >>> client.trace(
+            ...     provider="openai",
+            ...     model="gpt-4o",
+            ...     input_text="What's the weather?",
+            ...     output_text="It's 72°F and sunny.",
+            ...     tool_calls=[
+            ...         {"name": "weather_api", "input": {"city": "NYC"}, "output": {"temp": 72}}
+            ...     ]
+            ... )
+
+        Check statistics:
+            >>> stats = client.get_stats()
+            >>> print(f"Sent: {stats['traces_sent']}, Failed: {stats['traces_failed']}")
+
+    Attributes:
+        api_key: Your CERT API key.
+        project: Project name for organizing traces.
+        endpoint: The API endpoint URL.
+        auto_extract_knowledge: Whether to auto-extract knowledge from tool outputs.
+
+    See Also:
+        TraceContext: Context manager for automatic timing and error capture.
+        extract_knowledge_from_tool_calls: Utility to extract context from tool outputs.
     """
 
     def __init__(
@@ -218,54 +265,114 @@ class CertClient:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
-        Log an LLM trace. Non-blocking.
+        Log an LLM trace to the CERT dashboard. Non-blocking.
 
         Only 4 parameters are required: provider, model, input_text, output_text.
         Everything else has sensible defaults.
 
+        Examples:
+            Minimal trace (just the essentials):
+                >>> client.trace(
+                ...     provider="openai",
+                ...     model="gpt-4o",
+                ...     input_text="What is 2+2?",
+                ...     output_text="4"
+                ... )
+
+            With timing and token counts:
+                >>> client.trace(
+                ...     provider="anthropic",
+                ...     model="claude-sonnet-4-20250514",
+                ...     input_text="Explain quantum computing",
+                ...     output_text="Quantum computing uses...",
+                ...     duration_ms=1234.5,
+                ...     prompt_tokens=15,
+                ...     completion_tokens=150
+                ... )
+
+            Grounded evaluation (RAG/retrieval):
+                >>> client.trace(
+                ...     provider="openai",
+                ...     model="gpt-4o",
+                ...     input_text="What is the capital of France?",
+                ...     output_text="Paris is the capital of France.",
+                ...     evaluation_mode="grounded",
+                ...     knowledge_base="France is a country in Europe. Paris is the capital.",
+                ...     context_source="retrieval"
+                ... )
+
+            With tool calls (auto-extracts knowledge):
+                >>> client.trace(
+                ...     provider="openai",
+                ...     model="gpt-4o",
+                ...     input_text="What's the weather in NYC?",
+                ...     output_text="It's 72°F and sunny in New York.",
+                ...     tool_calls=[
+                ...         {"name": "get_weather", "input": {"city": "NYC"}, "output": {"temp": 72, "condition": "sunny"}}
+                ...     ]
+                ... )
+
+            Error handling:
+                >>> client.trace(
+                ...     provider="openai",
+                ...     model="gpt-4o",
+                ...     input_text="Generate something",
+                ...     output_text="",
+                ...     status="error",
+                ...     error_message="Rate limit exceeded"
+                ... )
+
         Args:
-            provider: LLM provider (e.g., "openai", "anthropic", "google")
-            model: Model name (e.g., "gpt-4o", "claude-sonnet-4-20250514")
-            input_text: Input prompt/messages
-            output_text: Model response
-            
-            duration_ms: Request duration in milliseconds (optional, defaults to 0)
-            start_time: When the operation started (optional)
-            end_time: When the operation ended (optional)
-            
-            prompt_tokens: Input token count (optional)
-            completion_tokens: Output token count (optional)
-            
-            status: Trace status - "success" or "error" (default: "success")
-            error_message: Error message if status is "error"
-            
-            trace_id: Unique trace identifier (auto-generated if not provided)
-            span_id: Unique span identifier (auto-generated if not provided)
-            parent_span_id: Parent span ID for nested spans
-            name: Operation name (defaults to "{provider}.{model}")
-            kind: Span kind (default: "CLIENT")
-            
-            evaluation_mode: "grounded", "ungrounded", "agentic", or "auto"
-                            - grounded: Has knowledge_base to verify against
-                            - ungrounded: No external context
-                            - agentic: Multi-step with tool calls
-                            - auto: Auto-detect based on other params
-            knowledge_base: Context/documents for grounded evaluation
-            
-            eval_mode: Alias for evaluation_mode (for compatibility)
-            context: Alias for knowledge_base (for compatibility)
-            
-            output_schema: Expected output structure for validation
-            tool_calls: List of tool/function calls for agentic mode
-            goal_description: Description of the agentic goal
-            
-            task_type: Type of task (e.g., "qa", "chat", "summarization")
-            context_source: Source of context (e.g., "retrieval", "conversation")
-            
-            metadata: Additional custom metadata
+            provider: LLM provider name (e.g., "openai", "anthropic", "google", "cohere").
+            model: Model identifier (e.g., "gpt-4o", "claude-sonnet-4-20250514", "gemini-pro").
+            input_text: The input prompt or messages sent to the LLM.
+            output_text: The response text from the LLM.
+
+            duration_ms: Request duration in milliseconds. Defaults to 0 if not provided.
+            start_time: When the LLM call started (datetime with timezone).
+            end_time: When the LLM call completed (datetime with timezone).
+
+            prompt_tokens: Number of input tokens. Defaults to 0.
+            completion_tokens: Number of output tokens. Defaults to 0.
+
+            status: Trace status - "success" or "error". Defaults to "success".
+            error_message: Error details when status is "error".
+
+            trace_id: Unique trace identifier. Auto-generated UUID if not provided.
+            span_id: Unique span identifier. Auto-generated if not provided.
+            parent_span_id: Parent span ID for creating nested/hierarchical traces.
+            name: Operation name. Defaults to "{provider}.{model}".
+            kind: Span kind - "CLIENT", "SERVER", "PRODUCER", "CONSUMER", or "INTERNAL".
+
+            evaluation_mode: Controls which metrics are computed:
+                - "grounded": Full metrics including faithfulness, NLI (requires knowledge_base)
+                - "ungrounded": Basic metrics only (coherence, toxicity)
+                - "auto": Auto-detect based on knowledge_base/tool_calls presence (default)
+            knowledge_base: Reference documents/context for grounded evaluation.
+                When provided, enables faithfulness and grounding metrics.
+            context_source: Source of the knowledge_base - "retrieval", "tools", "conversation".
+
+            eval_mode: DEPRECATED. Use evaluation_mode instead.
+            context: DEPRECATED. Use knowledge_base instead.
+
+            output_schema: JSON Schema for structured output validation.
+            tool_calls: List of tool/function calls. Each dict should have:
+                - "name" (required): Tool name
+                - "input" (optional): Tool input parameters
+                - "output" (optional): Tool response (auto-extracted as knowledge_base)
+                - "error" (optional): Error message if tool failed
+            goal_description: High-level description of what the agent is trying to achieve.
+
+            task_type: Type of task - "qa", "summarization", "chat", "code_generation", etc.
+            metadata: Additional custom key-value pairs to attach to the trace.
 
         Returns:
-            Trace ID (UUID string)
+            str: The trace_id (UUID string) that can be used for correlation.
+
+        Note:
+            This method is non-blocking. Traces are queued and sent in batches
+            by a background thread. Use client.flush() to force immediate send,
+            or client.close() on shutdown to ensure all traces are sent.
         """
         # === Handle deprecated parameter warnings ===
         if eval_mode is not None:
@@ -515,12 +622,61 @@ class TraceContext:
     Context manager for automatic timing and error capture.
 
     Automatically captures start/end times, duration, and error status.
+    Use this when you want precise timing without manual bookkeeping.
 
-    Example:
-        >>> with TraceContext(client, provider="openai", model="gpt-4", input_text="Hello") as ctx:
-        ...     response = llm.invoke(prompt)
-        ...     ctx.set_output(response.content)
-        ...     ctx.set_tokens(response.usage.input, response.usage.output)
+    Features:
+        - Automatic timing: start_time, end_time, duration_ms captured automatically
+        - Error capture: Exceptions are caught and logged with status="error"
+        - Flexible: Set output, tokens, and knowledge_base during execution
+
+    Examples:
+        Basic usage with OpenAI:
+            >>> with TraceContext(client, provider="openai", model="gpt-4o", input_text="Hello") as ctx:
+            ...     response = openai.chat.completions.create(
+            ...         model="gpt-4o",
+            ...         messages=[{"role": "user", "content": "Hello"}]
+            ...     )
+            ...     ctx.set_output(response.choices[0].message.content)
+            ...     ctx.set_tokens(response.usage.prompt_tokens, response.usage.completion_tokens)
+
+        With RAG/grounded evaluation:
+            >>> with TraceContext(client, provider="openai", model="gpt-4o", input_text=question) as ctx:
+            ...     # Retrieve documents
+            ...     docs = retriever.get_relevant_docs(question)
+            ...     ctx.set_knowledge_base("\\n".join(docs), source="retrieval")
+            ...     # Generate response
+            ...     response = llm.generate(question, context=docs)
+            ...     ctx.set_output(response.text)
+
+        With tool calls:
+            >>> with TraceContext(
+            ...     client,
+            ...     provider="anthropic",
+            ...     model="claude-sonnet-4-20250514",
+            ...     input_text="What's the weather?",
+            ...     tool_calls=[{"name": "get_weather", "output": {"temp": 72}}]
+            ... ) as ctx:
+            ...     ctx.set_output("It's 72°F")
+
+        Error handling (automatic):
+            >>> with TraceContext(client, provider="openai", model="gpt-4o", input_text="Hi") as ctx:
+            ...     raise ValueError("API Error")  # Automatically logged with status="error"
+
+    Attributes:
+        trace_id (str): Unique trace identifier (auto-generated UUID).
+        span_id (str): Unique span identifier (auto-generated).
+        start_time (datetime): When the context was entered.
+        output_text (str): The LLM response (set via set_output).
+        prompt_tokens (int): Input token count (set via set_tokens).
+        completion_tokens (int): Output token count (set via set_tokens).
+        knowledge_base (str): Context for grounded evaluation (set via set_knowledge_base).
+
+    Args:
+        client: The CertClient instance to use for logging.
+        provider: LLM provider name (e.g., "openai", "anthropic").
+        model: Model identifier (e.g., "gpt-4o", "claude-sonnet-4-20250514").
+        input_text: The input prompt or messages.
+        **kwargs: Additional arguments passed to client.trace() (e.g., tool_calls, metadata).
     """
 
     def __init__(
