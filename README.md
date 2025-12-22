@@ -534,6 +534,6 @@ Apache 2.0
 
 ## Links
 
-- **Dashboard:** [dashboard.cert-framework.com](https://dashboard.cert-framework.com)
+- **Cert Framework:** [cert-framework.com](https://cert-framework.com)
 - **GitHub:** [github.com/Javihaus/cert-sdk](https://github.com/Javihaus/cert-sdk)
 - **Issues:** [github.com/Javihaus/cert-sdk/issues](https://github.com/Javihaus/cert-sdk/issues)
