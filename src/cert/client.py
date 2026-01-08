@@ -18,7 +18,7 @@ from cert.types import EvalMode, SpanKind, ToolCall, TraceStatus
 
 import requests
 
-__version__ = "0.5.0"
+__version__ = "1.0.0"
 
 logger = logging.getLogger(__name__)
 
