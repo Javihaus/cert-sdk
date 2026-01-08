@@ -119,7 +119,7 @@ client = CertClient(
     flush_interval=5.0,           # Seconds between auto-flushes (default: 5.0)
     max_queue_size=1000,          # Max queued traces before dropping (default: 1000)
     timeout=5.0,                  # HTTP timeout in seconds (default: 5.0)
-    auto_extract_context=True     # Extract context from tool outputs (default: True)
+    auto_extract_knowledge=True   # Extract knowledge from tool outputs (default: True)
 )
 ```
 
