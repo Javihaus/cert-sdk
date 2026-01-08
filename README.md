@@ -1,5 +1,5 @@
 <div align="center">
-<img src="docs/logo_cert_a_v3.png" alt="CERT" width="20%" />
+<img src="https://raw.githubusercontent.com/Javihaus/cert-sdk/main/docs/logo_cert_a_v3.png" alt="CERT" width="20%" />
 </div>
 
 # CERT SDK
