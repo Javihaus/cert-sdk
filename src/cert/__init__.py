@@ -1,11 +1,11 @@
 """
 CERT SDK - LLM Monitoring for Production Applications
 
-Two-mode evaluation architecture (v0.4.0+):
+Two-mode evaluation architecture (v1.0.0):
 - Grounded: Has knowledge_base -> full metric suite
 - Ungrounded: No knowledge_base -> basic metrics
 
-Bias detection (v0.5.0+):
+Bias detection (v1.0.0):
 - Demographic bias: Standard categories (gender, race, etc.)
 - Custom policies: Domain-specific rules
 """
@@ -20,7 +20,7 @@ from cert.client import (
 )
 
 from cert.types import (
-    # New types (v0.4.0+)
+    # New types (v1.0.0)
     EvaluationMode,
     ContextSource,
     SpanKind,
@@ -30,7 +30,6 @@ from cert.types import (
     EvalMode,
 )
 
-# Bias detection (v0.5.0+)
 from cert.bias import (
     # Enums
     BiasSeverity,
@@ -64,7 +63,7 @@ __all__ = [
     # Backwards compatibility (deprecated)
     "EvalMode",
     "extract_context_from_tool_calls",
-    # Bias detection (v0.5.0+)
+    # Bias detection (v1.0.0)
     "BiasSeverity",
     "BiasConsensus",
     "DemographicBiasConfig",
