@@ -505,10 +505,6 @@ def test_trace_id_can_be_provided(mock_post):
     client.close()
 
 
-# ============================================================================
-# Evaluation Mode Tests (v0.4.0 - New API)
-# ============================================================================
-
 
 @patch("cert.client.requests.post")
 def test_grounded_mode_with_knowledge_base(mock_post):
@@ -1424,7 +1420,7 @@ def test_version_import():
     """Test that version can be imported."""
     from cert import __version__
 
-    assert __version__ == "0.5.0"
+    assert __version__ == "1.0.0"
 
 
 # Backwards compatibility test for extract_context_from_tool_calls
