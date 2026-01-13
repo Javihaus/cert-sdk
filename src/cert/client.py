@@ -176,7 +176,7 @@ class CertClient:
         self,
         api_key: str,
         project: str = "default",
-        dashboard_url: str = "https://dashboard.cert-framework.com",
+        dashboard_url: str = "https://cert-framework.com",
         batch_size: int = 10,
         flush_interval: float = 5.0,
         max_queue_size: int = 1000,
