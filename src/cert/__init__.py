@@ -9,6 +9,13 @@ Bias detection (v1.0.0):
 - Demographic bias: Standard categories (gender, race, etc.)
 - Custom policies: Domain-specific rules
 """
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("cert-sdk")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
+
 
 from cert.client import (
     CertClient,
@@ -16,7 +23,6 @@ from cert.client import (
     extract_knowledge_from_tool_calls,
     # Backwards compatibility
     extract_context_from_tool_calls,
-    __version__,
 )
 
 from cert.types import (
